@@ -29,7 +29,11 @@
         <div style="height:90px; overflow:auto"><small>
           <a href="#112016-find-all-files-containing-a-given-string--encontrar-todos-los-archivos-que-contienen-un-string-dado">
             * Find all files containing a given string
-          </a><br></small>
+          </a><br>
+          <a href="#08012016-fosuserbundle-routes">
+            * FOSUserBundle routes
+          </a><br>
+          </small>
         </div>
         <!-- ./Index -->
 
@@ -39,11 +43,45 @@
       <section>
         <hr>
         <h3>
+          <a id="08012016-fosuserbundle-routes" class="anchor" href="#08012016-fosuserbundle-routes" aria-hidden="true">
+			  <span class="octicon octicon-link"></span>
+			  </a>
+			  // FOSUserBundle routes<br>
+			  // Rutas definidas por FOSUserBundle<br>
+        </h3>
+        <pre>
+<code>
+-- Try php app/console router:debug
+
+fos_user_security_login                GET|POST ANY    ANY  /login                            
+fos_user_security_check                POST     ANY    ANY  /login_check                      
+fos_user_security_logout               GET      ANY    ANY  /logout                           
+fos_user_profile_show                  GET      ANY    ANY  /profile/                         
+fos_user_profile_edit                  GET|POST ANY    ANY  /profile/edit                     
+fos_user_registration_register         GET|POST ANY    ANY  /register/                        
+fos_user_registration_check_email      GET      ANY    ANY  /register/check-email             
+fos_user_registration_confirm          GET      ANY    ANY  /register/confirm/{token}         
+fos_user_registration_confirmed        GET      ANY    ANY  /register/confirmed               
+fos_user_resetting_request             GET      ANY    ANY  /resetting/request                
+fos_user_resetting_send_email          POST     ANY    ANY  /resetting/send-email             
+fos_user_resetting_check_email         GET      ANY    ANY  /resetting/check-email            
+fos_user_resetting_reset               GET|POST ANY    ANY  /resetting/reset/{token}          
+fos_user_change_password               GET|POST ANY    ANY  /profile/change-password
+</code>
+        </pre>
+        <sub>[ January 8, 2016 ] While thinking about #symfony #fosuserbundle #routes</sub>
+      </section>
+
+      <section>
+        <hr>
+        <h3>
           <a id="112016-find-all-files-containing-a-given-string--encontrar-todos-los-archivos-que-contienen-un-string-dado" class="anchor" href="#112016-find-all-files-containing-a-given-string--encontrar-todos-los-archivos-que-contienen-un-string-dado" aria-hidden="true"><span class="octicon octicon-link"></span></a>// Find all files containing a given string<br>// Encontrar todos los archivos que contienen un string dado<br>
         </h3>
         <pre><code>grep -nrw /path/to/directory -e "string"</code></pre>
         <sub>[ January 1, 2016 ] While thinking about #unix #grep #filesearch #needle #haystack</sub>
       </section>
+
+     
       <!-- ./Articles -->
 
       <footer>
