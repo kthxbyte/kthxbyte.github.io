@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>JSON viewer</title>
+
+    <link rel="stylesheet" href="../stylesheets/styles.css">
+    <link rel="stylesheet" href="../stylesheets/github-light.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.2.1/themes/default/style.min.css">
+    <meta name="viewport" content="width=device-width">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1>JSON viewer</h1>
+        <p>
+          Created in a rush by <a href="http://kthxbyte.github.io">myself</a> using <a href="http://www.geany.org">Geany</a></br>
+          Powered by <a href="http://jquery.com">jQuery</a>, <a href="https://www.jstree.com">jsTree</a> and <a href="http://pastebin.com">Pastebin</a><br>
+        </p>
+        <p>
+          JSON pastebin URL goes here<br>
+          <input id="json-url" style="width:75%" type="text" placeholder="http://pastebin.com/yyc20Nj2" value="http://pastebin.com/yyc20Nj2"/>
+          <button id="btn-submit" type="submit">Go!</button>
+        </p>
+        <p>
+        Please note that JSON data <b>must</b> be defined as a parameter to the function <code><b>jsonViewer()</b></code>. Try the following example:
+        <pre><code>jsonViewer({
+    "hello": "world"
+});</code></pre>
+        </p>
+      </header>
+
+      <!-- JSON viewer -->
+      <section>
+        <h3>
+          // JSON => jsTree output<br>
+        </h3>	
+        <pre><div id="jstree-placeholder"></div></pre>
+      </section>
+      <!-- ./JSON viewer -->
+
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small>
+        <br><small>Escuchar reggaeton puede producir cáncer</small></p>
+      </footer>
+    </div>
+    
+    <script src="../javascripts/scale.fix.js"></script>
+    <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.2.1/jstree.min.js"></script>
+    <script>
+    // TODO: Check url is actually a pastebin URL
+    //       instead of this blindfolded string chopping?
+	function getRawPastebinURL(url){
+        var id = url.split("/").pop();
+        return "http://pastebin.com/raw/" + id +"/";
+    }
+
+    function jsonViewer(data){
+        window.processing = false;
+        var code = "<ul>"+ recurse(data) +"</ul>";
+        $('#jstree-placeholder').jstree('destroy');
+        $('#jstree-placeholder').html( code ).jstree(); 
+    }
+
+    function recurse(data){
+        html = "";
+        $.each(data, function(index,item){
+            if (item != null && typeof(item) == "object"){
+                // Subtree
+                html += "<li><code><b>"+ index +"</b></code><ul>"+ 
+                        recurse(item) +"</ul></li>";
+            } else {
+                // Leaf
+                html += "<li><code><b>"+ index +": </b>'"+ 
+                        item +"'</code></li>";
+            }
+        });
+        return html;
+    }
+
+    // Oldschool ASCII indeterminate progress indicator
+    function loading(counter){
+        if (window.processing == true){
+            var loadingText = $('#jstree-placeholder').text().slice(0,-1);
+            var nextchar = "x";
+            switch(counter % 4){
+                case 0:
+                    nextchar = "/";
+                    break;
+                case 1:
+                    nextchar = "-";
+                    break;
+                case 2:
+                    nextchar = "\\";
+                    break;
+                case 3:
+                    nextchar = "|";
+                    break;
+            }
+            $('#jstree-placeholder').html("<code>"+loadingText + nextchar + "</code>");
+            setTimeout(function(){loading(counter+1);}, 80);
+        }
+    }
+    
+    $(function(){
+        window.processing = false;
+
+        $('#btn-submit').click(function(event){
+            var pastebin_url = getRawPastebinURL($('#json-url').prop('value'));
+
+            $('#jstree-placeholder').html("Fetching "+ pastebin_url +" ...  ");
+            window.processing = true;
+            loading(0);
+            
+            $.ajax({
+                crossDomain:true,
+                dataType: 'jsonp',
+                url: pastebin_url,
+                jsonp: false,
+                cache: false,
+            });
+        });
+    });
+    </script>
+    <script type="text/javascript">
+      var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+      document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+    </script>
+    <script type="text/javascript">
+      try {
+        var pageTracker = _gat._getTracker("UA-71895140-1");
+        pageTracker._trackPageview();
+      } catch(err) {}
+    </script>
+  </body>
+</html>
