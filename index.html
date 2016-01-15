@@ -19,16 +19,16 @@
         <h1>kthxbye was already taken</h1>
         <p>One-liner cookbook</p>
 
-		<a href="https://github.com/kthxbyte">
-			<img alt="" class="avatar" height="230" src="https://avatars0.githubusercontent.com/u/1776463?v=3&amp;s=460" width="230" />
-			<h3 class="vcard-names">
-				<span class="vcard-username" itemprop="additionalName"><b>kthxbyte | Salvador Muñoz</b></span>
-			</h3>
-		</a>
+        <a href="https://github.com/kthxbyte">
+            <img alt="" class="avatar" height="230" src="https://avatars0.githubusercontent.com/u/1776463?v=3&amp;s=460" width="230" />
+            <h3 class="vcard-names">
+                <span class="vcard-username" itemprop="additionalName"><b>kthxbyte | Salvador Muñoz</b></span>
+            </h3>
+        </a>
 
-		<!-- Index -->
+        <!-- Index -->
 <!--        <div style="height:90px; overflow:auto"><small>
-			
+            
           <a href="#08012016-display-json-as-a-jstree">
             * Display JSON as a jsTree
           </a><br>
@@ -43,14 +43,15 @@
         <!-- ./Index -->
 
       </header>
-
+      <!-- Just a reference point to begin inserting articles -->
+      <div id="placeholder"></div>
       <!-- Articles -->
       <section>
         <hr>
         <h3>
           <a id="12012016-count-files-inside-a-directory" class="anchor" href="#12012016-count-files-inside-a-directory" aria-hidden="true">
-			  <span class="octicon octicon-link"></span>
-			  </a>// Counting files inside a directory<br>// Contando archivos dentro de un directorio<br>
+              <span class="octicon octicon-link"></span>
+              </a>// Counting files inside a directory<br>// Contando archivos dentro de un directorio<br>
         </h3>
         <pre><code>find /path/to/directory -type f | wc -l</code></pre>
         <sub>[ January 12, 2016 ] While thinking about #unix #shell #find #filecount</sub>
@@ -60,8 +61,8 @@
         <hr>
         <h3>
           <a id="10012016-json-viewer" class="anchor" href="#10012016-json-viewer" aria-hidden="true">
-			  <span class="octicon octicon-link"></span>
-			  </a>// JSON tree view, using data from Pastebin<br>// Vista de arbol de JSON, utilizando datos desde Pastebin<br>
+              <span class="octicon octicon-link"></span>
+              </a>// JSON tree view, using data from Pastebin<br>// Vista de arbol de JSON, utilizando datos desde Pastebin<br>
         </h3>
         <pre><a href="http://kthxbyte.github.io/json/index.html">http://kthxbyte.github.io/json/index.html</a></pre>
         <sub>[ January 10, 2016 ] While thinking about #json #jstree #pastebin</sub>
@@ -71,8 +72,8 @@
         <hr>
         <h3>
           <a id="08012016-display-json-as-a-jstree" class="anchor" href="#08012016-display-json-as-a-jstree" aria-hidden="true">
-			  <span class="octicon octicon-link"></span>
-			  </a>// Display JSON as a jsTree<br>// Desplegar JSON como un jsTree<br>
+              <span class="octicon octicon-link"></span>
+              </a>// Display JSON as a jsTree<br>// Desplegar JSON como un jsTree<br>
         </h3>
         <pre><a href="https://jsfiddle.net/z3w9ar2k/">https://jsfiddle.net/z3w9ar2k/</a></pre>
         <sub>[ January 8, 2016 ] While thinking about #json #jstree</sub>
@@ -82,10 +83,10 @@
         <hr>
         <h3>
           <a id="08012016-fosuserbundle-routes" class="anchor" href="#08012016-fosuserbundle-routes" aria-hidden="true">
-			  <span class="octicon octicon-link"></span>
-			  </a>
-			  // FOSUserBundle routes<br>
-			  // Rutas definidas por FOSUserBundle<br>
+              <span class="octicon octicon-link"></span>
+              </a>
+              // FOSUserBundle routes<br>
+              // Rutas definidas por FOSUserBundle<br>
         </h3>
         <pre>
 <code>
@@ -121,14 +122,68 @@ fos_user_change_password               GET|POST ANY    ANY  /profile/change-pass
 
      
       <!-- ./Articles -->
+      
 
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small>
         <br><small>Escuchar reggaeton puede producir cáncer</small></p>
       </footer>
     </div>
+    <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
     <script src="javascripts/scale.fix.js"></script>
+    <script src="javascripts/jaml.js"></script>
+    <script type="text/javascript">
+        Jaml.register('tag', function(tag){
+            b('#', tag, ' ')
+        });
+        
+        Jaml.register('article-english', function(article){
+            section(
+                hr(),
+                h3(a(
+                    {
+                        id: article.id, 
+                        class:'anchor', 
+                        href: '#' + article.id,
+                    }, 
+                    span({class:'octicon octicon-link'})
+                    ),
+                    '// ', article.title['en'], br()
+                ),
+                p(article.text['en']),
+                pre(code( article.code.join("\n") )),
+                sub('[ ', article.date['en'], ' ] ',
+                    'While thinking about ', 
+                    Jaml.render('tag', article.tags))
+            );
+        });
+        Jaml.register('article-spanish', function(article){
+            section(
+                hr(),
+                h3(a(
+                    {
+                        id: article.id, 
+                        class:'anchor', 
+                        href: '#' + article.id,
+                    }, 
+                    span({class:'octicon octicon-link'})
+                    ),
+                    '// ', article.title['es'], br()
+                ),
+                p(article.text['es']), 
+                pre(code( article.code.join("\n") )),
+                sub('[ ', article.date['es'], ' ] ',
+                    'Mientras pensaba en ', 
+                    Jaml.render('tag', article.tags))
+            );
+        });
 
+		$.getJSON("articles/articles.json", function(articles){
+			for (var x = 0; x < articles.length; x++){
+				$('#placeholder').prepend(Jaml.render('article-english', articles[x]));
+			}
+		});
+    </script>
     <script type="text/javascript">
       var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
       document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
@@ -140,6 +195,5 @@ fos_user_change_password               GET|POST ANY    ANY  /profile/change-pass
         pageTracker._trackPageview();
       } catch(err) {}
     </script>
-
   </body>
 </html>

@@ -1,0 +1,40 @@
+[
+{
+	"id": "15012016-testing-jaml",
+	"title": {
+		"en": "Testing Jaml",
+		"es": "Probando Jaml"
+	},
+	"date": {
+		"en": "January 15, 2016",
+		"es": "15 de Enero de 2016"
+	},
+	"tags": ["jaml","javascript","json"],
+	"text": {
+		"en": "Switching from plain HTML to <a href='https://github.com/edspencer/jaml'>jaml</a>-generated HTML from <a href='articles/articles.json'>JSON</a> data. This <b>should</b> make life easier. The template for these entries:",
+		"es": "Cambiando de HTML plano a HTML generado por <a href='https://github.com/edspencer/jaml'>jaml</a> a partir de datos <a href='articles/articles.json'>JSON</a>. Esto <b>debería</b> hacer la vida más fácil. La plantilla para estas entradas:"
+	},
+	"code": [
+		"",
+		"Jaml.register('article-english', function(article){",
+		"   section(",
+		"   hr(),",
+		"      h3(a(",
+		"         {",
+		"            id: article.id, ",
+		"            class:'anchor', ",
+		"            href: '#' + article.id,",
+		"         }, ",
+		"         span({class:'octicon octicon-link'})",
+		"         ),",
+		"         '// ', article.title['en'], br()",
+		"      ),",
+		"      p(article.text['en']),",
+		"      pre(code( article.code.join('\\n') )),",
+		"      sub('[ ', article.date['en'], ' ] ',",
+		"         'While thinking about ', ",
+		"         Jaml.render('tag', article.tags))",
+		"   );",
+		"});"
+	]
+}]
