@@ -57,5 +57,25 @@
 		"",
 		"extension=ext/php_sockets.dll"
 	]
+},
+{
+	"id": "28012016-using-busybox-shell-for-windows",
+	"title": {
+		"en": "Using busybox shell for Windows",
+		"es": "Usando shell de busybox para Windows"
+	},
+	"date": {
+		"en": "January 28, 2016",
+		"es": "28 de Enero de 2016"
+	},
+	"tags": ["busybox","unix","shell","windows"],
+	"text": {
+		"en": "Missing vi/grep/wget/find/nc/awk/etc in windows? Download busybox from <a href='http://frippery.org/busybox/'>http://frippery.org/busybox</a>, place <b>busybox.exe</b> somewhere in your PATH (I'm using <b>C:/Windows/System32</b>), run cmd.exe, then busybox shell from the console:",
+		"es": "Extrañas vi/grep/wget/find/nc/awk/etc en Windows? Descarga busybox desde <a href='http://frippery.org/busybox/'>http://frippery.org/busybox</a>, pon <b>busybox.exe</b> en algun directorio existente en PATH (Yo uso <b>C:/Windows/System32</b>), ejecuta cmd.exe, y luego busybox en modo shell desde la consola:"
+	},
+	"code": [
+		"",
+		"busybox sh -l"
+	]
 }
 ]
