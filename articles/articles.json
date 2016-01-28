@@ -37,4 +37,25 @@
 		"   );",
 		"});"
 	]
-}]
+},
+{
+	"id": "28012016-enable-socket-create-for-php5-windows",
+	"title": {
+		"en": "Enable socket_create() for PHP5 (Windows)",
+		"es": "Activar socket_create() en PHP5 (Windows)"
+	},
+	"date": {
+		"en": "January 28, 2016",
+		"es": "28 de Enero de 2016"
+	},
+	"tags": ["PHP","Windows","socket_create"],
+	"text": {
+		"en": "Socket functions in PHP are disabled by default. Uncommenting one line in your <b>php.ini</b> file will do the trick:",
+		"es": "Las funciones de sockets en PHP vienen desactivadas por defecto. Basta con descomentar una linea que ya viene comentada en el archivo <b>php.ini</b> para resolverlo:"
+	},
+	"code": [
+		"",
+		"extension=ext/php_sockets.dll"
+	]
+}
+]
