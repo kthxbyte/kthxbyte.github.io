@@ -77,5 +77,26 @@
 		"",
 		"busybox sh -l"
 	]
+},
+{
+	"id": "08022016-http-serving-a-directory-using-python-and-simplehttpserver",
+	"title": {
+		"en": "HTTP Serving a directory using Python and SimpleHTTPServer",
+		"es": "Sirviendo un directorio como HTTP con ayuda de Python y SimpleHTTPServer"
+	},
+	"date": {
+		"en": "February 8, 2016",
+		"es": "8 de Febrero de 2016"
+	},
+	"tags": ["python","simplehttpserver"],
+	"text": {
+		"en": "If you ever need to quick serve a directory to your web browser, try the following, then visit <b>127.0.0.1:8000</b> in your web browser.",
+		"es": "Si alguna vez necesitas servir a la rápida un directorio para visitarlo con un browser, intenta lo siguiente, y luego visita <b>127.0.0.1:8000</b> en tu web browser."
+	},
+	"code": [
+		"",
+		"cd /your/path",
+		"python -m SimpleHTTPServer"
+	]
 }
 ]
