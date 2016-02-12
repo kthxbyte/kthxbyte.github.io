@@ -98,5 +98,25 @@
 		"cd /your/path",
 		"python -m SimpleHTTPServer"
 	]
+},
+{
+	"id": "12022016-installing-mysql-56-in-your-raspbian-jessie",
+	"title": {
+		"en": "Installing MySQL 5.6 in your raspbian (jessie)",
+		"es": "Instalando MySQL 5.6 en tu raspbian (jessie)"
+	},
+	"date": {
+		"en": "February 12, 2016",
+		"es": "12 de Febrero de 2016"
+	},
+	"tags": ["mysql","raspbian","raspberrypi"],
+	"text": {
+		"en": "It turns out jessie includes MySQL 5.5 only, but stretch has MySQL 5.6. So, try including stretch in your /etc/apt/sources.list, then run the usual magic commands:<p><b>apt-get update<br>apt-get install mysql-server-5.6</b></p><p>The stretch repo:</p>",
+		"es": "Resulta que jessie solamente incluye MySQL 5.5, pero stretch tiene MySQL 5.6. Entonces, trata de incluir el repositorio de stretch en tu archivo /etc/apt/sources.list, y entonces ejecuta los comandos magicos:<p><b>apt-get update<br>apt-get install mysql-server-5.6</b></p><p>El repositorio de stretch:</p>"
+	},
+	"code": [
+		"",
+		"deb http://ftp.debian.org/debian stretch main"
+	]
 }
 ]
