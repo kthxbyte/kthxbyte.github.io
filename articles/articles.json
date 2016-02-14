@@ -118,5 +118,25 @@
 		"",
 		"deb http://ftp.debian.org/debian stretch main"
 	]
+},
+{
+	"id": "14022016-fixing-debian-apt-get-no-pubkey-error",
+	"title": {
+		"en": "Fixing Debian apt-get NO_PUBKEY error",
+		"es": "Reparando error de apt-get NO_PUBKEY en Debian"
+	},
+	"date": {
+		"en": "February 14, 2016",
+		"es": "14 de Febrero de 2016"
+	},
+	"tags": ["debian","apt-get","keyring","gpg"],
+	"text": {
+		"en": "In case you get 'The following signatures couldn't be verified because the public key is not available: NO_PUBKEY ...', try this:",
+		"es": "Si te encuentras con que 'The following signatures couldn't be verified because the public key is not available: NO_PUBKEY ...', intenta lo siguiente:"
+	},
+	"code": [
+		"",
+		"sudo apt-get install debian-keyring"
+	]
 }
 ]
