@@ -138,5 +138,26 @@
 		"",
 		"sudo apt-get install debian-keyring"
 	]
+},
+{
+	"id": "23022016-fixing-permissions-issues-in-symfony-cache-and-logs-directories",
+	"title": {
+		"en": "Fixing permissions issues in Symfony app/cache and app/logs directories",
+		"es": "Reparando problemas de permisos en los directorios de Symfony app/cache y app/logs"
+	},
+	"date": {
+		"en": "February 23, 2016",
+		"es": "23 de Febrero de 2016"
+	},
+	"tags": ["symfony","permissions","linux"],
+	"text": {
+		"en": "This happens every time I set up a new Symfony project in Debian (jessie). The magic words:",
+		"es": "Esto ocurre cada vez que inicio un nuevo proyecto Symfony en Debian (jessie). Las palabras magicas:"
+	},
+	"code": [
+		"",
+		"sudo setfacl -R -m u:www-data:rwx -m u:`whoami`:rwx app/cache app/logs",
+		"sudo setfacl -dR -m u:www-data:rwx -m u:`whoami`:rwx app/cache app/logs"
+	]
 }
 ]
