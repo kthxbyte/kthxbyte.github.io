@@ -161,7 +161,7 @@
 	]
 },
 {
-	"id": "23022016-fixing-permissions-issues-in-symfony3-cache-logs-and-sessions",
+	"id": "02072016-fixing-permissions-issues-in-symfony3-cache-logs-and-sessions",
 	"title": {
 		"en": "Fixing permissions issues in Symfony 3 var/cache, var/logs and var/sessions",
 		"es": "Reparando problemas de permisos en los directorios de Symfony 3 var/cache, var/logs y var/sessions"
@@ -179,6 +179,30 @@
 		"",
 		"sudo setfacl -R -m u:www-data:rwx -m u:`whoami`:rwx var/cache var/logs var/sessions",
 		"sudo setfacl -dR -m u:www-data:rwx -m u:`whoami`:rwx var/cache var/logs var/sessions"
+	]
+},
+{
+	"id": "07072016-raspbian-wheezy-apt-get-complains-public-key-is-not-available-no-pubkey-8B48AD6246925553-7638D0442B90D010",
+	"title": {
+		"en": "Raspbian wheezy: apt-get complains 'public key is not available: NO_PUBKEY 8B48AD6246925553 NO_PUBKEY 7638D0442B90D010'",
+		"es": "Raspbian wheezy: apt-get reclama 'public key is not available: NO_PUBKEY 8B48AD6246925553 NO_PUBKEY 7638D0442B90D010'"
+	},
+	"date": {
+		"en": "July 7, 2016",
+		"es": "7 de Julio de 2016"
+	},
+	"tags": ["raspbian","wheezy","linux"],
+	"text": {
+		"en": "It turns out you'll have to add these keys by yourself before running apt-get update again:",
+		"es": "Tendrás que agregar estas llaves por tu cuenta antes de volver a ejecutar apt-get update:"
+	},
+	"code": [
+		"",
+		"gpg --keyserver pgpkeys.mit.edu --recv-key  8B48AD6246925553",
+		"gpg --keyserver pgpkeys.mit.edu --recv-key 7638D0442B90D010",
+		"gpg -a --export 8B48AD6246925553 | sudo apt-key add -",
+		"gpg -a --export 7638D0442B90D010 | sudo apt-key add -",
+		"apt-get update"
 	]
 }
 
