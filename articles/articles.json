@@ -159,5 +159,27 @@
 		"sudo setfacl -R -m u:www-data:rwx -m u:`whoami`:rwx app/cache app/logs",
 		"sudo setfacl -dR -m u:www-data:rwx -m u:`whoami`:rwx app/cache app/logs"
 	]
+},
+{
+	"id": "23022016-fixing-permissions-issues-in-symfony3-cache-logs-and-sessions",
+	"title": {
+		"en": "Fixing permissions issues in Symfony 3 var/cache, var/logs and var/sessions",
+		"es": "Reparando problemas de permisos en los directorios de Symfony 3 var/cache, var/logs y var/sessions"
+	},
+	"date": {
+		"en": "July 2, 2016",
+		"es": "2 de Julio de 2016"
+	},
+	"tags": ["symfony3","permissions","linux"],
+	"text": {
+		"en": "Symfony 3 has a different directory structure; that's why the older blog entry will not work for you if you are using Symfony 3. The magic words:",
+		"es": "Symfony 3 tiene una estructura de directorios diferente; por ese motivo el artículo anterior no te servirá si estás ocupando Symfony 3. Las palabras magicas:"
+	},
+	"code": [
+		"",
+		"sudo setfacl -R -m u:www-data:rwx -m u:`whoami`:rwx var/cache var/logs var/sessions",
+		"sudo setfacl -dR -m u:www-data:rwx -m u:`whoami`:rwx var/cache var/logs var/sessions"
+	]
 }
+
 ]
