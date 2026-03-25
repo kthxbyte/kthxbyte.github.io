@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>E.T. - Bladder Control | Translucent Puddles + Longer Pushes</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            background: #0a0f1a;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+        }
+        .game-container {
+            background: #2c2b1f;
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            border: 2px solid #c0a050;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            box-shadow: 0 0 0 4px #5a3e1a;
+            cursor: none;
+            background: #467a3e;
+        }
+        .info-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 16px;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .meter {
+            background: #1e2818;
+            border-radius: 20px;
+            padding: 6px 14px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border: 1px solid #efc27d;
+            flex: 1;
+            min-width: 140px;
+        }
+        .meter-label {
+            font-weight: bold;
+            color: #ffe0a3;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+        }
+        .meter-bar-bg {
+            flex: 1;
+            height: 18px;
+            background: #2a2418;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .meter-bar-fill {
+            width: 0%;
+            height: 100%;
+            background: #f7c56e;
+            transition: width 0.1s linear;
+        }
+        button {
+            background: #5c481c;
+            border: none;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            font-size: 1rem;
+            padding: 6px 20px;
+            border-radius: 30px;
+            color: #fff0b5;
+            cursor: pointer;
+            box-shadow: 0 3px 0 #2f2a18;
+            transition: 0.05s linear;
+        }
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 0 #2f2a18;
+        }
+        .level-badge {
+            background: #000000aa;
+            backdrop-filter: blur(2px);
+            border-radius: 30px;
+            padding: 4px 18px;
+            font-size: 1rem;
+            font-weight: bold;
+            color: #ffdf9c;
+            font-family: monospace;
+            letter-spacing: 1px;
+        }
+        .status {
+            background: #000000aa;
+            backdrop-filter: blur(2px);
+            border-radius: 20px;
+            padding: 4px 14px;
+            font-size: 0.7rem;
+            color: #ffefb0;
+            text-align: center;
+        }
+        @media (max-width: 980px) {
+            .meter-label { font-size: 0.7rem; }
+            .meter-bar-bg { height: 14px; }
+            button { font-size: 0.8rem; padding: 4px 16px; }
+            .level-badge { font-size: 0.8rem; padding: 2px 12px; }
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="900" height="650"></canvas>
+        <div class="info-panel">
+            <div class="meter">
+                <span class="meter-label">💧 BLADDER</span>
+                <div class="meter-bar-bg"><div id="bladderFill" class="meter-bar-fill"></div></div>
+            </div>
+            <div class="meter">
+                <span class="meter-label">🚀 SHIP TANK</span>
+                <div class="meter-bar-bg"><div id="shipFill" class="meter-bar-fill"></div></div>
+            </div>
+            <div class="level-badge" id="levelDisplay">🌙 LEVEL 1</div>
+            <button id="resetButton">🔄 RESTART LEVEL</button>
+        </div>
+        <div class="status">
+            🖱️ MOVE MOUSE · AUTO DRINK & FILL · PEE ON ENEMIES · DEFEND KEGS<br>
+            ⭐ COMPLETE A LEVEL → HARDER ENEMIES SPAWN
+        </div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        // ------------------- CANVAS -------------------
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const W = 900, H = 650;
+        canvas.width = W; canvas.height = H;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        // ------------------- GAME STATE -------------------
+        let gameActive = true;
+        let winFlag = false;
+        let loseFlag = false;
+        let currentLevel = 1;
+        let levelTransition = false;
+        let levelCompleteMessage = 0;
+
+        // ------------------- VISUAL EFFECTS -------------------
+        let peeEffects = [];
+        let droplets = [];
+
+        // ------------------- PERSISTENT POOLS (now store shape data) -------------------
+        let peePools = [];
+        let beerPools = [];
+
+        // ------------------- ENTITIES -------------------
+        let et = {
+            x: W/2, y: H-80,
+            bladder: 50,
+            maxBladder: 100,
+            radius: 20
+        };
+        let ship = {
+            x: W/2, y: H-45,
+            peeTank: 0,
+            maxTank: 100,
+            radius: 26
+        };
+        let kegs = [];
+        let enemies = [];
+
+        const TYPE_HOBO = 1;
+        const TYPE_AGGRESSIVE = 2;
+        const TYPE_POLICE = 3;
+        const TYPE_SCIENTIST = 4;
+
+        // ------------------- UTILITIES -------------------
+        function clamp(val, min, max) { return Math.min(max, Math.max(min, val)); }
+        function distance(p1, p2) { return Math.hypot(p1.x - p2.x, p1.y - p2.y); }
+
+        // ------------------- KEG INIT (random positions) -------------------
+        function initKegs() {
+            const count = 5;
+            const minDist = 80;
+            const margin = 60;
+            let newKegs = [];
+            for (let i = 0; i < count; i++) {
+                let attempts = 0;
+                let placed = false;
+                while (!placed && attempts < 200) {
+                    let x = margin + Math.random() * (W - 2 * margin);
+                    let y = margin + Math.random() * (H - 2 * margin);
+                    let distToShip = Math.hypot(x - ship.x, y - ship.y);
+                    if (distToShip < 70) continue;
+                    let overlap = false;
+                    for (let k of newKegs) {
+                        if (Math.hypot(x - k.x, y - k.y) < minDist) {
+                            overlap = true;
+                            break;
+                        }
+                    }
+                    if (!overlap) {
+                        newKegs.push({
+                            x: x, y: y,
+                            beer: 80,
+                            maxBeer: 80,
+                            kicked: false,
+                            leakTimer: 0
+                        });
+                        placed = true;
+                    }
+                    attempts++;
+                }
+                if (!placed) {
+                    newKegs.push({
+                        x: 100 + (i * 150) % (W - 200),
+                        y: 150 + (i * 80) % (H - 200),
+                        beer: 80,
+                        maxBeer: 80,
+                        kicked: false,
+                        leakTimer: 0
+                    });
+                }
+            }
+            kegs = newKegs;
+        }
+
+        // ------------------- ENEMY GENERATION -------------------
+        function generateEnemiesForLevel(level) {
+            let newEnemies = [];
+            let remaining = level;
+            let scientistsCount = Math.floor(remaining / 4);
+            for (let i = 0; i < scientistsCount; i++) {
+                newEnemies.push(createEnemy(TYPE_SCIENTIST, randomSpawnX(), randomSpawnY()));
+                remaining -= 4;
+            }
+            if (remaining === 3) {
+                newEnemies.push(createEnemy(TYPE_AGGRESSIVE, randomSpawnX(), randomSpawnY()));
+                newEnemies.push(createEnemy(TYPE_HOBO, randomSpawnX(), randomSpawnY()));
+            } else if (remaining === 2) {
+                newEnemies.push(createEnemy(TYPE_HOBO, randomSpawnX(), randomSpawnY()));
+                newEnemies.push(createEnemy(TYPE_HOBO, randomSpawnX(), randomSpawnY()));
+            } else if (remaining === 1) {
+                newEnemies.push(createEnemy(TYPE_HOBO, randomSpawnX(), randomSpawnY()));
+            }
+            return newEnemies;
+        }
+
+        function randomSpawnX() { return 50 + Math.random() * (W - 100); }
+        function randomSpawnY() { return 40 + Math.random() * (H - 150); }
+
+        function createEnemy(type, x, y) {
+            let base = {
+                type: type,
+                x: x, y: y,
+                radius: (type===TYPE_HOBO? 16 : type===TYPE_AGGRESSIVE? 18 : type===TYPE_POLICE? 18 : 16),
+                bladder: 0,
+                maxBladder: 40,
+                sampleBottle: 0,
+                maxSample: (type === TYPE_SCIENTIST) ? 20 : 0,
+                state: "walking",
+                unconsciousTimer: 0,
+                speed: (type===TYPE_HOBO? 0.9 : type===TYPE_AGGRESSIVE? 1.1 : type===TYPE_POLICE? 0.8 : 1.0),
+                attackCooldown: 0,
+                repelCooldown: 0
+            };
+            if (type === TYPE_AGGRESSIVE) {
+                base.bladder = 30;
+                if (base.bladder > 0) base.state = "seeking";
+            }
+            return base;
+        }
+
+        function resetCurrentLevel() {
+            gameActive = true;
+            winFlag = false;
+            loseFlag = false;
+            levelTransition = false;
+            levelCompleteMessage = 0;
+            et.bladder = 50;
+            et.x = W/2; et.y = H-80;
+            ship.peeTank = 0;
+            initKegs();
+            enemies = generateEnemiesForLevel(currentLevel);
+            peeEffects = [];
+            droplets = [];
+            peePools = [];
+            beerPools = [];
+            updateMeters();
+            document.getElementById('levelDisplay').innerHTML = `🌙 LEVEL ${currentLevel}`;
+            mouseX = et.x; mouseY = et.y;
+        }
+
+        function advanceToNextLevel() {
+            if (levelTransition) return;
+            levelTransition = true;
+            currentLevel++;
+            ship.peeTank = 0;
+            initKegs();
+            enemies = generateEnemiesForLevel(currentLevel);
+            et.bladder = clamp(et.bladder, 0, et.maxBladder);
+            levelCompleteMessage = 1.5;
+            peePools = [];
+            beerPools = [];
+            updateMeters();
+            document.getElementById('levelDisplay').innerHTML = `🌙 LEVEL ${currentLevel}`;
+            gameActive = true;
+            winFlag = false;
+            levelTransition = false;
+            mouseX = et.x; mouseY = et.y;
+        }
+
+        // ------------------- MOUSE CONTROL -------------------
+        let mouseX = et.x, mouseY = et.y;
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let canvasX = (e.clientX - rect.left) * scaleX;
+            let canvasY = (e.clientY - rect.top) * scaleY;
+            mouseX = clamp(canvasX, 20, W-20);
+            mouseY = clamp(canvasY, 20, H-20);
+        }
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let canvasX = (touch.clientX - rect.left) * scaleX;
+            let canvasY = (touch.clientY - rect.top) * scaleY;
+            mouseX = clamp(canvasX, 20, W-20);
+            mouseY = clamp(canvasY, 20, H-20);
+        }, { passive: false });
+        canvas.addEventListener('touchstart', (e) => e.preventDefault());
+
+        // ------------------- MOVEMENT WITH POOL SLOWDOWN -------------------
+        function getSpeedMultiplierForPosition(x, y) {
+            for (let pool of peePools) {
+                if (Math.hypot(x - pool.x, y - pool.y) < pool.radius) return 0.5;
+            }
+            for (let pool of beerPools) {
+                if (Math.hypot(x - pool.x, y - pool.y) < pool.radius) return 0.5;
+            }
+            return 1.0;
+        }
+
+        function updateETmovement(deltaSec) {
+            let dx = mouseX - et.x;
+            let dy = mouseY - et.y;
+            let dist = Math.hypot(dx, dy);
+            if (dist > 1) {
+                let speed = 300 * deltaSec;
+                let multiplier = getSpeedMultiplierForPosition(et.x, et.y);
+                speed *= multiplier;
+                let move = Math.min(speed, dist);
+                et.x += dx / dist * move;
+                et.y += dy / dist * move;
+            }
+            et.x = clamp(et.x, 20, W-20);
+            et.y = clamp(et.y, 20, H-20);
+        }
+
+        // ------------------- GAME UPDATES -------------------
+        function addPeeSquirt(fromX, fromY, toX, toY, isDark = false) {
+            peeEffects.push({
+                fromX: fromX, fromY: fromY,
+                toX: toX, toY: toY,
+                timer: 0.28,
+                color: isDark ? "#c97e2a" : "#ffdc80"
+            });
+            let angle = Math.atan2(toY - fromY, toX - fromX);
+            for (let i = 0; i < 12; i++) {
+                let t = Math.random();
+                let offsetX = (Math.random() - 0.5) * 12;
+                let offsetY = (Math.random() - 0.5) * 12;
+                let x = fromX + (toX - fromX) * t + offsetX;
+                let y = fromY + (toY - fromY) * t + offsetY;
+                let vx = Math.cos(angle + (Math.random() - 0.5) * 1.2) * (20 + Math.random() * 30);
+                let vy = Math.sin(angle + (Math.random() - 0.5) * 1.2) * (20 + Math.random() * 30);
+                droplets.push({
+                    x: x, y: y,
+                    vx: vx, vy: vy,
+                    life: 0.3 + Math.random() * 0.2,
+                    color: isDark ? "#b85c1a" : "#ffcc55"
+                });
+            }
+            // Add persistent pee pool (with seed based on position for consistent shape)
+            peePools.push({ x: toX, y: toY, radius: 24, seed: (toX * 131 + toY * 253) % 1000, isPee: true });
+        }
+
+        function updateGame(deltaSec) {
+            if (!gameActive) return;
+
+            // 1. ET drinks from kegs
+            for (let keg of kegs) {
+                if (keg.kicked) continue;
+                if (keg.beer <= 0) continue;
+                let dist = distance(et, keg);
+                if (dist < 32 && et.bladder < et.maxBladder) {
+                    let drink = Math.min(18 * deltaSec, keg.beer, et.maxBladder - et.bladder);
+                    if (drink > 0) {
+                        keg.beer -= drink;
+                        et.bladder += drink;
+                    }
+                }
+            }
+
+            // 2. ET fills ship
+            let distToShip = distance(et, ship);
+            if (distToShip < 40 && et.bladder > 0 && ship.peeTank < ship.maxTank) {
+                let transfer = Math.min(15 * deltaSec, et.bladder, ship.maxTank - ship.peeTank);
+                et.bladder -= transfer;
+                ship.peeTank += transfer;
+                if (ship.peeTank >= ship.maxTank && !winFlag && gameActive) {
+                    winFlag = true;
+                    gameActive = false;
+                }
+            }
+
+            // 3. Auto repel (ET pee) - push distance INCREASED (from 140 to 220)
+            const REPEL_RANGE = 80;
+            const PUSH_DIST = 220; // 3x original 140
+            for (let e of enemies) {
+                if (e.repelCooldown > 0) continue;
+                let distToET = distance(et, e);
+                if (distToET < REPEL_RANGE) {
+                    let cost = (e.type === TYPE_HOBO ? 4 : e.type === TYPE_AGGRESSIVE ? 6 : e.type === TYPE_POLICE ? 8 : 7);
+                    if (et.bladder >= cost) {
+                        et.bladder -= cost;
+                        e.repelCooldown = 0.42;
+                        addPeeSquirt(et.x, et.y, e.x, e.y, false);
+                        let angle = Math.atan2(e.y - et.y, e.x - et.x);
+                        e.x += Math.cos(angle) * PUSH_DIST;
+                        e.y += Math.sin(angle) * PUSH_DIST;
+                        e.x = clamp(e.x, 20, W-20);
+                        e.y = clamp(e.y, 20, H-20);
+                        if (e.type === TYPE_AGGRESSIVE && e.state === "seeking") e.state = "walking";
+                    }
+                }
+            }
+
+            // 4. Update enemies AI
+            updateEnemies(deltaSec);
+
+            // 5. Update keg leaks (kicked kegs) -> create/update beer pools
+            for (let keg of kegs) {
+                if (keg.kicked) {
+                    if (keg.leakTimer > 0) {
+                        let leakAmount = Math.min(3.0 * deltaSec, keg.beer);
+                        keg.beer -= leakAmount;
+                        let pool = beerPools.find(p => p.x === keg.x && p.y === keg.y);
+                        if (!pool) {
+                            pool = { x: keg.x, y: keg.y, radius: 0, seed: (keg.x * 73 + keg.y * 97) % 1000, isPee: false };
+                            beerPools.push(pool);
+                        }
+                        pool.radius = Math.min(100, pool.radius + leakAmount * 16);
+                        keg.leakTimer -= deltaSec;
+                    } else {
+                        keg.kicked = false;
+                    }
+                }
+            }
+
+            // 6. Loss condition
+            let anyBeer = kegs.some(k => k.beer > 0 && !k.kicked);
+            if (!anyBeer && ship.peeTank < ship.maxTank && et.bladder <= 0) {
+                gameActive = false;
+                loseFlag = true;
+            }
+        }
+
+        // ---------- Enemy AI (delta based) ----------
+        function findNearestKegWithBeer(enemy) {
+            let best = null;
+            let bestDist = Infinity;
+            for (let i=0; i<kegs.length; i++) {
+                let k = kegs[i];
+                if (k.kicked) continue;
+                if (k.beer <= 0) continue;
+                let d = distance(enemy, k);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            return best;
+        }
+
+        function updateEnemies(deltaSec) {
+            for (let i=0; i<enemies.length; i++) {
+                let e = enemies[i];
+                if (e.repelCooldown > 0) e.repelCooldown -= deltaSec;
+                if (e.attackCooldown > 0) e.attackCooldown -= deltaSec;
+
+                let speedMult = getSpeedMultiplierForPosition(e.x, e.y);
+                let actualSpeed = e.speed * speedMult;
+
+                if (e.type === TYPE_HOBO) {
+                    if (e.state === "unconscious") {
+                        e.unconsciousTimer -= deltaSec;
+                        let leak = Math.min(6 * deltaSec, e.bladder);
+                        e.bladder -= leak;
+                        if (!e.poolRef) {
+                            let pool = { x: e.x, y: e.y, radius: 0, seed: (e.x * 131 + e.y * 253) % 1000, isPee: true };
+                            peePools.push(pool);
+                            e.poolRef = pool;
+                        }
+                        if (e.poolRef) {
+                            e.poolRef.radius = Math.min(90, e.poolRef.radius + leak * 10);
+                        }
+                        if (e.bladder <= 0 || e.unconsciousTimer <= 0) {
+                            e.state = "walking";
+                            e.bladder = 0;
+                            delete e.poolRef;
+                        }
+                    } else if (e.state === "walking") {
+                        let kegIdx = findNearestKegWithBeer(e);
+                        if (kegIdx !== null) {
+                            let keg = kegs[kegIdx];
+                            let dx = keg.x - e.x, dy = keg.y - e.y;
+                            let len = Math.hypot(dx, dy);
+                            if (len > 2) {
+                                let move = Math.min(actualSpeed * 100 * deltaSec, len);
+                                e.x += dx / len * move;
+                                e.y += dy / len * move;
+                            }
+                            if (len < 32 && keg.beer > 0) {
+                                let drink = Math.min(5 * deltaSec, keg.beer, e.maxBladder - e.bladder);
+                                if (drink > 0) {
+                                    keg.beer -= drink;
+                                    e.bladder += drink;
+                                }
+                                if (e.bladder >= e.maxBladder) {
+                                    e.state = "unconscious";
+                                    e.unconsciousTimer = 20.0;
+                                    e.bladder = e.maxBladder;
+                                }
+                            }
+                        } else {
+                            e.x += (Math.random() - 0.5) * 40 * deltaSec * speedMult;
+                            e.y += (Math.random() - 0.5) * 40 * deltaSec * speedMult;
+                        }
+                    }
+                }
+                else if (e.type === TYPE_AGGRESSIVE) {
+                    const AGGRESSIVE_ATTACK_RANGE = 110;
+                    const AGGRESSIVE_PUSH_DIST = 360; // 3x original 120
+                    if (e.state === "seeking") {
+                        let dx = et.x - e.x, dy = et.y - e.y;
+                        let len = Math.hypot(dx, dy);
+                        if (len > 2) {
+                            let move = Math.min(actualSpeed * 100 * deltaSec, len);
+                            e.x += dx / len * move;
+                            e.y += dy / len * move;
+                        }
+                        if (len < AGGRESSIVE_ATTACK_RANGE && e.bladder > 0 && e.attackCooldown <= 0) {
+                            let attackAmount = Math.min(5, e.bladder);
+                            e.bladder -= attackAmount;
+                            et.bladder = Math.max(0, et.bladder - attackAmount);
+                            e.attackCooldown = 1.33;
+                            addPeeSquirt(e.x, e.y, et.x, et.y, true);
+                            let angle = Math.atan2(et.y - e.y, et.x - e.x);
+                            et.x += Math.cos(angle) * AGGRESSIVE_PUSH_DIST;
+                            et.y += Math.sin(angle) * AGGRESSIVE_PUSH_DIST;
+                            et.x = clamp(et.x, 20, W-20);
+                            et.y = clamp(et.y, 20, H-20);
+                            mouseX = et.x;
+                            mouseY = et.y;
+                        }
+                        if (e.bladder <= 0) {
+                            e.state = "walking";
+                        }
+                    } else if (e.state === "walking") {
+                        let kegIdx = findNearestKegWithBeer(e);
+                        if (kegIdx !== null) {
+                            let keg = kegs[kegIdx];
+                            let dx = keg.x - e.x, dy = keg.y - e.y;
+                            let len = Math.hypot(dx, dy);
+                            if (len > 2) {
+                                let move = Math.min(actualSpeed * 100 * deltaSec, len);
+                                e.x += dx / len * move;
+                                e.y += dy / len * move;
+                            }
+                            if (len < 32 && keg.beer > 0) {
+                                let drink = Math.min(5 * deltaSec, keg.beer, e.maxBladder - e.bladder);
+                                if (drink > 0) {
+                                    keg.beer -= drink;
+                                    e.bladder += drink;
+                                }
+                                if (e.bladder > 0) {
+                                    e.state = "seeking";
+                                }
+                            }
+                        } else {
+                            e.x += (Math.random() - 0.5) * 40 * deltaSec * speedMult;
+                            e.y += (Math.random() - 0.5) * 40 * deltaSec * speedMult;
+                        }
+                    }
+                }
+                else if (e.type === TYPE_POLICE) {
+                    let kegIdx = findNearestKegWithBeer(e);
+                    if (kegIdx !== null) {
+                        let keg = kegs[kegIdx];
+                        let dx = keg.x - e.x, dy = keg.y - e.y;
+                        let len = Math.hypot(dx, dy);
+                        if (len > 2) {
+                            let move = Math.min(actualSpeed * 100 * deltaSec, len);
+                            e.x += dx / len * move;
+                            e.y += dy / len * move;
+                        }
+                        if (len < 35 && !keg.kicked && keg.beer > 0) {
+                            keg.kicked = true;
+                            keg.leakTimer = 3.0;
+                        }
+                    } else {
+                        e.x += (Math.random() - 0.5) * 30 * deltaSec * speedMult;
+                        e.y += (Math.random() - 0.5) * 30 * deltaSec * speedMult;
+                    }
+                }
+                else if (e.type === TYPE_SCIENTIST) {
+                    let dx = ship.x - e.x, dy = ship.y - e.y;
+                    let len = Math.hypot(dx, dy);
+                    if (len > 2) {
+                        let move = Math.min(actualSpeed * 100 * deltaSec, len);
+                        e.x += dx / len * move;
+                        e.y += dy / len * move;
+                    }
+                    if (len < 45 && ship.peeTank > 0 && e.sampleBottle < e.maxSample) {
+                        let extract = Math.min(4.0 * deltaSec, ship.peeTank, e.maxSample - e.sampleBottle);
+                        ship.peeTank -= extract;
+                        e.sampleBottle += extract;
+                    }
+                    if (e.sampleBottle >= e.maxSample) {
+                        enemies.splice(i,1);
+                        i--;
+                        continue;
+                    }
+                }
+                e.x = clamp(e.x, 20, W-20);
+                e.y = clamp(e.y, 20, H-20);
+            }
+        }
+
+        // ------------------- ORGANIC PUDDLE DRAWING (translucent, liquid-like) -------------------
+        function drawOrganicPool(pool) {
+            const { x, y, radius, seed, isPee } = pool;
+            if (radius <= 0) return;
+
+            const points = 24;
+            const angleStep = (Math.PI * 2) / points;
+            // Use seed to generate deterministic variations
+            const rng = (i) => {
+                let val = Math.sin(seed * 0.01 + i * 0.7) * 0.5 + 0.5;
+                return val;
+            };
+
+            ctx.beginPath();
+            for (let i = 0; i <= points; i++) {
+                let angle = i * angleStep;
+                // Add irregularity: radius variation based on angle
+                let variation = 0.7 + rng(i) * 0.6;
+                let r = radius * variation;
+                let px = x + Math.cos(angle) * r;
+                let py = y + Math.sin(angle) * r;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+
+            // Translucent radial gradient
+            ctx.save();
+            ctx.globalAlpha = 0.7; // Translucent
+            let grad = ctx.createRadialGradient(x - radius*0.2, y - radius*0.2, radius*0.2, x, y, radius);
+            if (isPee) {
+                grad.addColorStop(0, "#e8b860");
+                grad.addColorStop(0.7, "#b87a30");
+                grad.addColorStop(1, "#784a18");
+            } else {
+                grad.addColorStop(0, "#f0c880");
+                grad.addColorStop(0.7, "#c28a48");
+                grad.addColorStop(1, "#8a5a28");
+            }
+            ctx.fillStyle = grad;
+            ctx.fill();
+            // Add subtle specular highlight
+            ctx.globalCompositeOperation = "lighter";
+            ctx.globalAlpha = 0.2;
+            let highlight = ctx.createRadialGradient(x - radius*0.3, y - radius*0.3, radius*0.1, x, y, radius*0.6);
+            highlight.addColorStop(0, "white");
+            highlight.addColorStop(1, "rgba(255,255,200,0)");
+            ctx.fillStyle = highlight;
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawPools() {
+            for (let pool of beerPools) {
+                drawOrganicPool(pool);
+            }
+            for (let pool of peePools) {
+                drawOrganicPool(pool);
+            }
+        }
+
+        // ------------------- DRAW REST (unchanged, but font handling fixed) -------------------
+        function drawBackground() {
+            ctx.fillStyle = "#467a3e";
+            ctx.fillRect(0,0,W,H);
+            ctx.fillStyle = "#5c9e4a";
+            for (let i=0; i<300; i++) ctx.fillRect((i*37)%W, (i*23)%H, 6, 6);
+        }
+
+        function drawKegs() {
+            ctx.font = "38px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+            for (let k of kegs) {
+                ctx.fillStyle = "#000000";
+                ctx.fillText("🛢️", k.x, k.y);
+                let percent = k.beer / k.maxBeer;
+                ctx.fillStyle = "#f5b85c";
+                ctx.fillRect(k.x-20, k.y-28, 40*percent, 6);
+                ctx.strokeStyle = "#a05e2a";
+                ctx.strokeRect(k.x-20, k.y-28, 40, 6);
+                ctx.font = "bold 12px monospace";
+                ctx.fillStyle = "#ffeaac";
+                ctx.fillText(Math.floor(k.beer), k.x, k.y-38);
+                ctx.font = "38px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+            }
+        }
+
+        function drawShip() {
+            ctx.font = "44px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+            ctx.fillStyle = "#000000";
+            ctx.fillText("🚀", ship.x, ship.y);
+            ctx.font = "bold 12px monospace";
+            ctx.fillStyle = "#fff6cf";
+            ctx.fillText(`${Math.floor(ship.peeTank)}/100`, ship.x, ship.y-18);
+        }
+
+        function drawET() {
+            ctx.font = "44px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+            ctx.fillStyle = "#000000";
+            ctx.fillText("👽", et.x, et.y);
+            let peePercent = et.bladder / et.maxBladder;
+            ctx.fillStyle = "#e5b04a";
+            ctx.fillRect(et.x-20, et.y+20, 40*peePercent, 6);
+            ctx.strokeStyle = "#a05e2a";
+            ctx.strokeRect(et.x-20, et.y+20, 40, 6);
+        }
+
+        function drawEnemies() {
+            const EMOJI_FONT = "42px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+            ctx.font = EMOJI_FONT;
+            for (let e of enemies) {
+                let emoji = "";
+                if (e.type === TYPE_HOBO) emoji = "🧔‍♂️";
+                if (e.type === TYPE_AGGRESSIVE) emoji = "😠";
+                if (e.type === TYPE_POLICE) emoji = "👮";
+                if (e.type === TYPE_SCIENTIST) emoji = "👩‍🔬";
+                ctx.fillStyle = "#000000";
+                ctx.fillText(emoji, e.x, e.y);
+
+                if (e.type === TYPE_HOBO && e.state === "unconscious") {
+                    ctx.font = "20px monospace";
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillText("💤", e.x-8, e.y-25);
+                    ctx.font = EMOJI_FONT;
+                }
+                if (e.type === TYPE_AGGRESSIVE) {
+                    let peePercent = e.bladder / e.maxBladder;
+                    ctx.fillStyle = "#88aaff";
+                    ctx.fillRect(e.x-20, e.y-32, 40*peePercent, 6);
+                    ctx.strokeStyle = "#4466aa";
+                    ctx.strokeRect(e.x-20, e.y-32, 40, 6);
+                    if (e.state === "seeking") {
+                        ctx.font = "20px monospace";
+                        ctx.fillStyle = "#ffaa55";
+                        ctx.fillText("⚠️", e.x-8, e.y-28);
+                        ctx.font = EMOJI_FONT;
+                    }
+                }
+                if (e.type === TYPE_SCIENTIST) {
+                    let samplePercent = e.sampleBottle / e.maxSample;
+                    ctx.fillStyle = "#88aaff";
+                    ctx.fillRect(e.x-20, e.y-32, 40*samplePercent, 6);
+                    ctx.strokeStyle = "#4466aa";
+                    ctx.strokeRect(e.x-20, e.y-32, 40, 6);
+                    ctx.font = "bold 10px monospace";
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fillText(`${Math.floor(e.sampleBottle)}/${e.maxSample}`, e.x, e.y-38);
+                    ctx.font = EMOJI_FONT;
+                }
+            }
+        }
+
+        function drawPeeJets() {
+            for (let i = 0; i < peeEffects.length; i++) {
+                let effect = peeEffects[i];
+                let alpha = Math.min(1, effect.timer * 4);
+                let width = 8 * (1 - effect.timer * 2);
+                if (width < 2) width = 2;
+                ctx.beginPath();
+                ctx.moveTo(effect.fromX, effect.fromY);
+                ctx.lineTo(effect.toX, effect.toY);
+                ctx.lineWidth = width;
+                ctx.strokeStyle = effect.color ? `rgba(${parseInt(effect.color.slice(1,3),16)}, ${parseInt(effect.color.slice(3,5),16)}, ${parseInt(effect.color.slice(5,7),16)}, ${alpha * 0.9})` : `rgba(255, 220, 80, ${alpha * 0.9})`;
+                ctx.stroke();
+                ctx.lineWidth = width * 0.6;
+                ctx.strokeStyle = effect.color ? `rgba(${parseInt(effect.color.slice(1,3),16)-40}, ${parseInt(effect.color.slice(3,5),16)-30}, ${parseInt(effect.color.slice(5,7),16)-20}, ${alpha})` : `rgba(255, 200, 40, ${alpha})`;
+                ctx.stroke();
+                effect.timer -= 1/60;
+                if (effect.timer <= 0) {
+                    peeEffects.splice(i,1);
+                    i--;
+                }
+            }
+            for (let i=0; i<droplets.length; i++) {
+                let d = droplets[i];
+                ctx.fillStyle = d.color ? `rgba(${parseInt(d.color.slice(1,3),16)}, ${parseInt(d.color.slice(3,5),16)}, ${parseInt(d.color.slice(5,7),16)}, ${Math.min(1, d.life * 3)})` : `rgba(255, 210, 70, ${Math.min(1, d.life * 3)})`;
+                ctx.beginPath();
+                ctx.arc(d.x, d.y, 2 + (1 - d.life) * 2, 0, Math.PI*2);
+                ctx.fill();
+                d.x += d.vx * 0.02;
+                d.y += d.vy * 0.02;
+                d.life -= 0.02;
+                if (d.life <= 0) {
+                    droplets.splice(i,1);
+                    i--;
+                }
+            }
+        }
+
+        function drawUI() {
+            if (levelCompleteMessage > 0) {
+                ctx.font = "bold 26px 'Courier New'";
+                ctx.fillStyle = "#ffefb0";
+                ctx.fillText(`LEVEL ${currentLevel-1} COMPLETE!`, W/2, H/2-50);
+                ctx.font = "14px monospace";
+                ctx.fillStyle = "#ffe0a0";
+                ctx.fillText(`Level ${currentLevel} begins`, W/2, H/2+10);
+            }
+            if (loseFlag) {
+                ctx.font = "bold 30px 'Courier New'";
+                ctx.fillStyle = "#ffb26e";
+                ctx.fillText("GAME OVER", W/2, H/2-30);
+                ctx.font = "14px monospace";
+                ctx.fillText("Press RESTART", W/2, H/2+25);
+            }
+        }
+
+        function updateMeters() {
+            document.getElementById('bladderFill').style.width = (et.bladder/et.maxBladder*100)+'%';
+            document.getElementById('shipFill').style.width = (ship.peeTank/ship.maxTank*100)+'%';
+        }
+
+        // ------------------- GAME LOOP -------------------
+        let lastFrame = 0;
+        function gameLoop(now) {
+            requestAnimationFrame(gameLoop);
+            if (!lastFrame) { lastFrame = now; return; }
+            let delta = Math.min(0.033, (now - lastFrame) / 1000);
+            if (delta <= 0) { lastFrame = now; return; }
+            lastFrame = now;
+
+            if (winFlag && gameActive === false && !loseFlag) {
+                advanceToNextLevel();
+                winFlag = false;
+                gameActive = true;
+            }
+            if (levelCompleteMessage > 0) levelCompleteMessage -= delta;
+
+            if (gameActive && !loseFlag && !winFlag) {
+                updateETmovement(delta);
+                updateGame(delta);
+                updateMeters();
+            }
+
+            drawBackground();
+            drawPools();
+            drawKegs();
+            drawShip();
+            drawEnemies();
+            drawET();
+            drawPeeJets();
+            drawUI();
+        }
+
+        document.getElementById('resetButton').addEventListener('click', () => {
+            resetCurrentLevel();
+            winFlag = false;
+            loseFlag = false;
+            gameActive = true;
+            levelCompleteMessage = 0;
+        });
+
+        resetCurrentLevel();
+        requestAnimationFrame(gameLoop);
+    })();
+</script>
+</body>
+</html>
