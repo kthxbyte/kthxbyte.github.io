@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Rubber Rocket Arena - Procedural Loop Edition</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, sans-serif; color: white; user-select: none;}
+        canvas { display: block; background: #0a0a0f; margin: 0 auto; }
+        
+        .ui { position: absolute; top: 15px; left: 15px; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 12px; border: 1px solid #444; width: 220px; pointer-events: none; }
+        .stat-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 13px; font-weight: bold; }
+        .bar-container { width: 130px; height: 12px; background: #222; border-radius: 6px; overflow: hidden; border: 1px solid #555; }
+        .bar-fill { height: 100%; transition: width 0.15s ease-out; }
+        .level-card { text-align: center; margin-bottom: 12px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .kdr-box { font-size: 16px; font-weight: bold; color: #ffcc00; text-align: center; margin-top: 5px; }
+
+        .sandbox-panel { 
+            position: absolute; top: 15px; right: 15px; 
+            background: rgba(20, 20, 25, 0.95); padding: 15px; 
+            border-radius: 12px; border: 1px solid #00ffaa; 
+            width: 260px; pointer-events: all; font-size: 12px;
+        }
+        .sandbox-panel h3 { margin: 0 0 10px 0; color: #00ffaa; text-align: center; font-size: 14px; text-transform: uppercase; }
+        .control-group { margin-bottom: 10px; }
+        .control-group label { display: block; margin-bottom: 3px; color: #ccc; }
+        .control-group input { width: 100%; cursor: pointer; accent-color: #00ffaa; }
+        .val-display { float: right; color: #00ffaa; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="ui">
+        <div class="level-card">
+            <h2 id="level-title" style="margin:0; color:#00ffaa; font-size: 18px;">NIVEL 1</h2>
+            <div style="font-size:10px; color:#888;">OBJETIVO: <span id="goal-text">10</span> BAJAS</div>
+        </div>
+        <div class="stat-row"><span>HP</span><div class="bar-container"><div id="hp-bar" class="bar-fill" style="background: linear-gradient(90deg, #ff416c, #ff4b2b); width:100%;"></div></div></div>
+        <div class="stat-row"><span>JET</span><div class="bar-container"><div id="jet-bar" class="bar-fill" style="background: linear-gradient(90deg, #00d2ff, #3a7bd5); width:100%;"></div></div></div>
+        <div class="kdr-box">K: <span id="k-val">0</span> | D: <span id="d-val">0</span> | KDR: <span id="kdr-val">0.00</span><br><h5>CONTROLES: WASD + ESPACIO<h5></div>
+    </div>
+
+    <div class="sandbox-panel">
+        <h3>Physics Sandbox</h3>
+        <div class="control-group"><label>Gravedad <span class="val-display" id="v-grav">0.60</span></label><input type="range" min="0" max="2" step="0.05" value="0.6" oninput="updatePhys('gravity', this.value, 'v-grav')"></div>
+        <div class="control-group"><label>Elasticidad <span class="val-display" id="v-elast">0.80</span></label><input type="range" min="0" max="1.5" step="0.05" value="0.8" oninput="updatePhys('elasticity', this.value, 'v-elast')"></div>
+        <div class="control-group"><label>Fricción Aire <span class="val-display" id="v-fric">0.985</span></label><input type="range" min="0.9" max="1" step="0.005" value="0.985" oninput="updatePhys('friction', this.value, 'v-fric')"></div>
+        <div class="control-group"><label>Gravedad Proyectil <span class="val-display" id="v-rgrav">0.15</span></label><input type="range" min="-0.1" max="1" step="0.05" value="0.15" oninput="updatePhys('rocketGravity', this.value, 'v-rgrav')"></div>
+        <div class="control-group"><label>Velocidad Proyectil <span class="val-display" id="v-rspd">25</span></label><input type="range" min="5" max="60" step="1" value="25" oninput="updatePhys('rocketSpeed', this.value, 'v-rspd')"></div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// --- GENERADOR PSEUDO-ALEATORIO (Seed) ---
+let seed = 12345;
+function mulberry32() {
+    return function() {
+      let t = seed += 0x6D2B79F5;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+let random = mulberry32();
+
+const PHYS = {
+    gravity: 0.6, friction: 0.985, elasticity: 0.8,
+    squishRecover: 0.12, baseRadius: 25,
+    rocketGravity: 0.15, rocketSpeed: 25
+};
+
+function updatePhys(param, val, displayId) {
+    PHYS[param] = parseFloat(val);
+    document.getElementById(displayId).innerText = PHYS[param].toFixed(param === 'rocketSpeed' ? 0 : 2);
+}
+
+let gameState = {
+    level: 1, kills: 0, deaths: 0,
+    targetKills: 10, enemiesCount: 2, isTransitioning: false,
+    shake: 0
+};
+
+const keys = {};
+let entities = [];
+let rockets = [];
+let particles = [];
+let map = [];
+
+// --- CLASE PLATAFORMA MÓVIL ---
+class Platform {
+    constructor(x1, y1, x2, y2, w, h, speed) {
+        this.x1 = x1; this.y1 = y1;
+        this.x2 = x2; this.y2 = y2;
+        this.w = w; this.h = h;
+        this.speed = speed;
+        this.progress = 0;
+        this.dir = 1;
+        this.x = x1; this.y = y1;
+    }
+    update() {
+        this.progress += this.speed * this.dir;
+        if(this.progress >= 1 || this.progress <= 0) this.dir *= -1;
+        // Interpolación lineal (LERP) para el movimiento suave
+        this.x = this.x1 + (this.x2 - this.x1) * this.progress;
+        this.y = this.y1 + (this.y2 - this.y1) * this.progress;
+    }
+    draw() {
+        ctx.fillStyle = '#1e1e2f';
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+        ctx.strokeStyle = "#3a3a5a";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(this.x, this.y, this.w, this.h);
+    }
+}
+
+function generateProceduralLevel(levelNum) {
+    seed = 12345 + (levelNum * 777); // Cambia la semilla por nivel
+    random = mulberry32();
+    map = [];
+
+    // Suelo estático
+    map.push(new Platform(0, canvas.height - 40, 0, canvas.height - 40, canvas.width, 40, 0));
+
+    // Generar plataformas según el nivel
+    const platformCount = 3 + levelNum; 
+    for(let i=0; i<platformCount; i++) {
+        let w = 50 + random() * 100;
+        let h = 20;
+        let x1 = random() * (canvas.width - w);
+        let y1 = 150 + random() * (canvas.height - 300);
+        
+        // El loop final (x2, y2)
+        let x2 = x1 + (random() - 0.5) * 300;
+        let y2 = y1 + (random() - 0.5) * 200;
+        
+        // Limitar bordes
+        x2 = Math.max(0, Math.min(canvas.width - w, x2));
+        y2 = Math.max(100, Math.min(canvas.height - 100, y2));
+
+        let speed = 0.002 + random() * 0.008 + (levelNum * 0.0005);
+        if (levelNum <= 2){
+            speed = 0;
+        }
+        map.push(new Platform(x1, y1, x2, y2, w, h, speed));
+    }
+}
+
+// (Las clases Particle, Rocket y Soldier se mantienen con ajustes para detectar 'map[i].x/y' dinámico)
+
+class Particle {
+    constructor(x, y, vx, vy, color, life, size, bouncy = false) {
+        this.x = x; this.y = y; this.vx = vx; this.vy = vy;
+        this.color = color; this.life = life; this.maxLife = life;
+        this.size = size; this.bouncy = bouncy;
+    }
+    update() {
+        if(this.bouncy) this.vy += PHYS.gravity;
+        this.x += this.vx; this.y += this.vy;
+        if(this.bouncy) {
+            if(this.y > canvas.height-40) { this.vy *= -PHYS.elasticity * 0.7; this.y = canvas.height-41; }
+        }
+        this.life--;
+    }
+    draw() {
+        ctx.globalAlpha = Math.max(0, this.life / this.maxLife);
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+        ctx.globalAlpha = 1;
+    }
+}
+
+class Rocket {
+    constructor(x, y, tx, ty, owner) {
+        this.x = x; this.y = y; this.owner = owner;
+        const angle = Math.atan2(ty - y, tx - x);
+        this.vx = Math.cos(angle) * PHYS.rocketSpeed;
+        this.vy = Math.sin(angle) * PHYS.rocketSpeed;
+        this.dead = false;
+    }
+    update() {
+        this.vy += PHYS.rocketGravity;
+        this.x += this.vx; this.y += this.vy;
+        if(this.y < 0 || this.y > canvas.height - 40 || this.x < 0 || this.x > canvas.width) {
+            this.explode(); return;
+        }
+        for(let p of map) {
+            if(this.x > p.x && this.x < p.x + p.w && this.y > p.y && this.y < p.y + p.h) {
+                this.explode(); return;
+            }
+        }
+        for(let e of entities) {
+            if(e !== this.owner && Math.hypot(e.x - this.x, e.y - this.y) < e.radius) {
+                this.explode(); return;
+            }
+        }
+    }
+    explode() {
+        this.dead = true;
+        for(let i=0; i<15; i++) particles.push(new Particle(this.x, this.y, (Math.random()-0.5)*12, (Math.random()-0.5)*12, '#ff9900', 20, 4));
+        entities.forEach(e => {
+            let dist = Math.hypot(e.x - this.x, e.y - this.y);
+            if(dist < 120) {
+                let pct = (1 - dist/120);
+                let ang = Math.atan2(e.y - this.y, e.x - this.x);
+                e.vx += Math.cos(ang) * pct * 32 * (PHYS.baseRadius / e.radius); 
+                e.vy += Math.sin(ang) * pct * 32 * (PHYS.baseRadius / e.radius);
+                e.hp -= pct * 115;
+                if(e.hp <= 0 && this.owner.isPlayer) updateStats(true);
+            }
+        });
+    }
+}
+
+class Soldier {
+    constructor(x, y, color, isPlayer = false) {
+        this.x = x; this.y = y; this.color = color;
+        this.vx = 0; this.vy = 0; this.hp = 100; this.jet = 100;
+        this.isPlayer = isPlayer; this.lastShot = 0;
+        this.radius = PHYS.baseRadius;
+        this.sqX = 1; this.sqY = 1;
+    }
+    update() {
+        this.radius = Math.max(6, (this.hp / 100) * PHYS.baseRadius);
+        this.vy += PHYS.gravity;
+        if(this.isPlayer) {
+            if(keys['KeyA']) this.vx -= 1.3; if(keys['KeyD']) this.vx += 1.3;
+            if(keys['KeyW'] && this.jet > 0) { this.vy -= 1.8; this.jet -= 2.8; }
+            else { this.jet = Math.min(100, this.jet + 1.4); }
+            if(keys['Space']) this.shoot();
+        } else {
+            if(Math.random() < 0.02) this.shoot();
+            this.vx += (player.x > this.x ? 0.35 : -0.35);
+        }
+        this.vx *= PHYS.friction;
+        this.x += this.vx; this.y += this.vy;
+
+        if(this.y + this.radius > canvas.height - 40) { 
+            this.y = canvas.height - 40 - this.radius; this.vy *= -PHYS.elasticity; this.sqY = 0.5; this.sqX = 1.4;
+        } else if(this.y - this.radius < 0) { 
+            this.y = this.radius; this.vy *= -PHYS.elasticity; this.sqY = 0.5; this.sqX = 1.4;
+        }
+        if(this.x - this.radius < 0) { this.x = this.radius; this.vx *= -PHYS.elasticity; }
+        if(this.x + this.radius > canvas.width) { this.x = canvas.width - this.radius; this.vx *= -PHYS.elasticity; }
+
+        map.forEach(p => {
+            if(this.x + this.radius > p.x && this.x - this.radius < p.x + p.w && this.y + this.radius > p.y && this.y - this.radius < p.y + p.h) {
+                if(this.y < p.y + p.h/2) { 
+                    this.y = p.y - this.radius; 
+                    this.vy *= -PHYS.elasticity; 
+                    // Si la plataforma se mueve, arrastramos levemente al personaje
+                    this.x += (p.x2 - p.x1) * p.speed * p.dir;
+                } else { 
+                    this.y = p.y + p.h + this.radius; this.vy *= -PHYS.elasticity; 
+                }
+            }
+        });
+
+        this.sqX += (1 - this.sqX) * PHYS.squishRecover;
+        this.sqY += (1 - this.sqY) * PHYS.squishRecover;
+
+        if(this.hp <= 0) this.die();
+    }
+    shoot() {
+        if(Date.now() - this.lastShot < 650) return;
+        let tx = this.isPlayer ? (entities.find(e=>!e.isPlayer)?.x || this.x+100) : player.x;
+        let ty = this.isPlayer ? (entities.find(e=>!e.isPlayer)?.y || this.y) : player.y;
+        rockets.push(new Rocket(this.x, this.y, tx, ty, this));
+        this.lastShot = Date.now();
+    }
+    die() {
+        for(let i=0; i<30; i++) particles.push(new Particle(this.x, this.y, (Math.random()-0.5)*15, (Math.random()-0.5)*15, '#ff0000', 15, Math.random()*10));
+        if(this.isPlayer) {
+            gameState.shake = 35; updateStats(false);
+            this.hp = 100; this.x = canvas.width/2; this.y = 100; this.vx = 0; this.vy = 0;
+        } else {
+            this.hp = 100; this.x = Math.random()*canvas.width; this.y = -100;
+        }
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.scale(this.sqX, this.sqY);
+        ctx.fillStyle = this.color;
+        ctx.beginPath(); ctx.arc(0, 0, this.radius, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.stroke();
+        ctx.restore();
+    }
+}
+
+function updateStats(isKill) {
+    if(isKill) gameState.kills++; else gameState.deaths++;
+    document.getElementById('k-val').innerText = gameState.kills;
+    document.getElementById('d-val').innerText = gameState.deaths;
+    let kdr = gameState.deaths === 0 ? gameState.kills : (gameState.kills / gameState.deaths);
+    document.getElementById('kdr-val').innerText = kdr.toFixed(2);
+    if(gameState.kills >= gameState.targetKills && !gameState.isTransitioning) nextLevel();
+}
+
+function nextLevel() {
+    gameState.isTransitioning = true;
+    gameState.level++;
+    gameState.targetKills += 5;
+    gameState.enemiesCount++;
+    document.getElementById('level-title').innerText = "Nivel " + gameState.level;
+    document.getElementById('goal-text').innerText = gameState.targetKills;
+    initLevel();
+    setTimeout(() => { gameState.isTransitioning = false; }, 1000);
+}
+
+const player = new Soldier(canvas.width/2, 100, '#00ff00', true);
+
+function initLevel() {
+    generateProceduralLevel(gameState.level);
+    entities = [player];
+    for(let i=0; i < gameState.enemiesCount; i++) {
+        entities.push(new Soldier(random()*canvas.width, -100, '#ff4444'));
+    }
+}
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+function loop() {
+    ctx.save();
+    if (gameState.shake > 0) {
+        ctx.translate((Math.random()-0.5)*gameState.shake, (Math.random()-0.5)*gameState.shake);
+        gameState.shake *= 0.85;
+    }
+    ctx.clearRect(-100, -100, canvas.width+200, canvas.height+200);
+    
+    map.forEach(p => { p.update(); p.draw(); });
+    rockets = rockets.filter(r => !r.dead);
+    rockets.forEach(r => { r.update(); ctx.fillStyle="white"; ctx.fillRect(r.x-3, r.y-3, 6, 6); });
+    particles = particles.filter(p => p.life > 0);
+    particles.forEach(p => { p.update(); p.draw(); });
+    entities.forEach(e => { e.update(); e.draw(); });
+    
+    ctx.restore();
+    document.getElementById('hp-bar').style.width = player.hp + '%';
+    document.getElementById('jet-bar').style.width = player.jet + '%';
+    requestAnimationFrame(loop);
+}
+
+initLevel();
+loop();
+</script>
+</body>
+</html>
