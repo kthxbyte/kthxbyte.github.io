@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Rubber Rocket: Neon Caverns - Arsenal Edition</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; user-select: none; }
+        canvas { display: block; }
+        .ui { 
+            position: absolute; top: 15px; left: 15px; 
+            background: rgba(0, 10, 10, 0.85); padding: 20px; 
+            border-radius: 12px; border: 2px solid #00ffaa; 
+            width: 250px; pointer-events: none; 
+            box-shadow: 0 0 20px rgba(0, 255, 170, 0.3);
+            z-index: 10;
+        }
+        .level-indicator { font-size: 22px; font-weight: bold; margin-bottom: 10px; color: #fff; text-transform: uppercase; text-align: center; text-shadow: 0 0 10px #00ffaa; }
+        
+        /* Nueva sección de Arma */
+        .weapon-info {
+            background: rgba(0, 255, 170, 0.1);
+            border: 1px solid #00ffaa;
+            border-radius: 6px;
+            padding: 8px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        .weapon-name { font-size: 18px; font-weight: bold; color: #00ffaa; text-shadow: 0 0 5px #00ffaa; }
+        .target-weapon { font-size: 12px; color: #ff4444; margin-top: 4px; }
+
+        .stat-label { font-size: 12px; font-weight: bold; margin-top: 8px; color: #aaa; }
+        .bar { width: 100%; height: 10px; background: #111; margin: 5px 0; border: 1px solid #333; border-radius: 5px; overflow: hidden; }
+        .fill { height: 100%; transition: width 0.1s ease-out; }
+        
+        #minimap {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 240px;
+            height: 180px;
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #00ffaa;
+            border-radius: 12px;
+            box-shadow: 0 0 20px rgba(0, 255, 170, 0.2);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div class="ui">
+        <div class="level-indicator" id="lvl-txt">NIVEL 1</div>
+        
+        <div class="weapon-info">
+            <div class="stat-label" style="margin-top:0">ARMA INFERIOR</div>
+            <div class="weapon-name" id="weap-nm">Metralleta</div>
+            <div class="target-weapon" id="targ-weap"></div>
+        </div>
+
+        <div class="stat-label">INTEGRIDAD DEL CASCO</div>
+        <div class="bar"><div id="hp-f" class="fill" style="background: linear-gradient(90deg, #ff0044, #ff5588); width: 100%;"></div></div>
+        <div class="stat-label">SISTEMA DE EMPUJE (JET)</div>
+        <div class="bar"><div id="jet-f" class="fill" style="background: linear-gradient(90deg, #00ccff, #00ffff); width: 100%;"></div></div>
+        <div style="font-size: 11px; color: #888; margin-top: 15px; text-align: center;">WASD: Mover | ESPACIO: Disparo<br>Toca los paquetes flotantes para cambiar de arma<br>Presiona 'N' para saltar nivel</div>
+    </div>
+    
+    <canvas id="minimap"></canvas>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+/** * CONFIGURACIÓN Y MOTOR DE CAOS (Original mantenido)
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const mCanvas = document.getElementById('minimap');
+const mCtx = mCanvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const WORLD = { 
+    width: 4800, 
+    height: 3600, 
+    res: 80,       
+    threshold: 0.38
+};
+
+const PHYS = { grav: 0.48, frict: 0.97, bounce: 0.35, steps: 6 };
+
+// Nuevos arrays para el sistema de drops
+let grid = [], entities = [], rockets = [], particles = [], explosions = [], weaponDrops = [], keys = {};
+let player, cam = { x: 0, y: 0 }, currentLevel = 1, gameTime = 0;
+
+/** * SISTEMA DE SEMILLAS Y PATRONES NEÓN (Original mantenido)
+ */
+function sfc32(seed) {
+    let a = 0x9E3779B9, b = 0x243F6A88, c = 0xB7E15162, d = seed;
+    return function() {
+        a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0; 
+        var t = (a + b | 0) + d | 0;
+        d = d + 1 | 0;
+        a = b ^ b >>> 9;
+        b = c + (c << 3) | 0;
+        c = (c << 21 | c >>> 11);
+        c = c + t | 0;
+        return (t >>> 0) / 4294967296;
+    }
+}
+let seededRandom = Math.random;
+
+const hatchPattern = (() => {
+    const p = document.createElement('canvas');
+    p.width = 32; p.height = 32;
+    const pctx = p.getContext('2d');
+    pctx.fillStyle = '#050a05'; 
+    pctx.fillRect(0, 0, 32, 32);
+    pctx.strokeStyle = '#00ffaa'; 
+    pctx.lineWidth = 2;
+    pctx.beginPath();
+    pctx.moveTo(0, 32); pctx.lineTo(32, 0);
+    pctx.moveTo(-16, 16); pctx.lineTo(16, -16);
+    pctx.moveTo(16, 48); pctx.lineTo(48, 16);
+    pctx.stroke();
+    pctx.strokeStyle = 'rgba(0, 255, 170, 0.3)';
+    pctx.lineWidth = 6;
+    pctx.stroke();
+    return ctx.createPattern(p, 'repeat');
+})();
+
+// MAP GENERATION (Original mantenido)
+function generateMap(level) {
+    document.getElementById('lvl-txt').innerText = "NIVEL " + level;
+    seededRandom = sfc32(level * 77777);
+
+    const cols = Math.ceil(WORLD.width / WORLD.res);
+    const rows = Math.ceil(WORLD.height / WORLD.res);
+    
+    grid = Array(cols).fill().map((_, x) => Array(rows).fill(0).map((_, y) => 
+        (x <= 1 || x >= cols-2 || y <= 1 || y >= rows-2) ? 1 : (seededRandom() < WORLD.threshold ? 1 : 0)
+    ));
+
+    for(let i=0; i<6; i++) {
+        let next = grid.map(arr => [...arr]);
+        for(let x=1; x<cols-1; x++) {
+            for(let y=1; y<rows-1; y++) {
+                let n = 0;
+                for(let ix=-1; ix<=1; ix++) for(let iy=-1; iy<=1; iy++) n += grid[x+ix][y+iy];
+                if (n > 4) next[x][y] = 1; else if (n < 4) next[x][y] = 0;
+            }
+        }
+        grid = next;
+    }
+
+    let startX = Math.floor(cols/2), startY = Math.floor(rows/2);
+    while(grid[startX][startY] === 1 && startX < cols-2) startX++;
+
+    let reachable = Array(cols).fill().map(() => Array(rows).fill(false));
+    let stack = [[startX, startY]];
+    if(grid[startX][startY] === 0) reachable[startX][startY] = true;
+
+    while(stack.length > 0) {
+        let [cx, cy] = stack.pop();
+        [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx, dy]) => {
+            let nx = cx + dx, ny = cy + dy;
+            if(nx >= 0 && nx < cols && ny >= 0 && ny < rows && grid[nx][ny] === 0 && !reachable[nx][ny]) {
+                reachable[nx][ny] = true;
+                stack.push([nx, ny]);
+            }
+        });
+    }
+
+    for(let x=0; x<cols; x++) for(let y=0; y<rows; y++) if(!reachable[x][y]) grid[x][y] = 1;
+}
+
+/** * === NUEVO SISTEMA DE ARSENAL Y TIPOS DE ENEMIGOS ===
+ */
+
+const WEAPON_TYPES = {
+    MACHINEGUN: { 
+        id: 'MG', name: "Metralleta", color: "#ccff00", 
+        cooldown: 80, speed: 35, spread: 0.05, count: 1, 
+        damage: 8, expRad: 15, expPush: 2, smoky: false, nuke: false 
+    },
+    ROCKET: { 
+        id: 'RK', name: "Lanzacohetes", color: "#00ffaa", 
+        cooldown: 500, speed: 28, spread: 0, count: 1, 
+        damage: 85, expRad: 150, expPush: 25, smoky: true, nuke: false 
+    },
+    SHOTGUN: { 
+        id: 'SG', name: "Escopeta Neon", color: "#ff00ff", 
+        cooldown: 800, speed: 30, spread: 0.3, count: 20, 
+        damage: 12, expRad: 25, expPush: 5, smoky: false, nuke: false 
+    },
+    NUKE: { 
+        id: 'NK', name: "Lanzador NUKE", color: "#ff4400", 
+        cooldown: 2500, speed: 15, spread: 0, count: 1, 
+        damage: 500, expRad: 600, expPush: 60, smoky: true, nuke: true 
+    }
+};
+
+const ENEMY_ARCHETYPES = [
+    { name: "Recluta", color: "#ff4444", hp: 80, weapon: WEAPON_TYPES.MACHINEGUN, scale: 1 },
+    { name: "Artillero", color: "#ff0066", hp: 150, weapon: WEAPON_TYPES.ROCKET, scale: 1.2 },
+    { name: "Asaltante", color: "#ff00ff", hp: 120, weapon: WEAPON_TYPES.SHOTGUN, scale: 1.1 },
+    { name: "DEMOLEDOR", color: "#ffcc00", hp: 300, weapon: WEAPON_TYPES.NUKE, scale: 1.5 }
+];
+
+/** * CLASES DE OBJETOS CON FÍSICA Y EFECTOS (Actualizadas)
+ */
+
+// Partículas (Original mantenido)
+class Particle {
+    constructor(x, y, color) {
+        this.x = x; this.y = y; this.color = color;
+        let angle = seededRandom() * Math.PI * 2;
+        let speed = 2 + seededRandom() * 8;
+        this.vx = Math.cos(angle) * speed;
+        this.vy = Math.sin(angle) * speed - 3;
+        this.radius = 2 + seededRandom() * 4;
+        this.life = 60 + seededRandom() * 60;
+        this.maxLife = this.life;
+    }
+    update() {
+        this.vy += PHYS.grav * 0.5;
+        this.vx *= 0.99; this.vy *= 0.99;
+        let nextX = this.x + this.vx;
+        let nextY = this.y + this.vy;
+        let gx = Math.floor(nextX / WORLD.res);
+        let gy = Math.floor(nextY / WORLD.res);
+        if(grid[gx] && grid[gx][gy] === 1) {
+            this.vx *= -0.6;
+            this.vy *= -0.6;
+        } else {
+            this.x = nextX; this.y = nextY;
+        }
+        this.life--;
+    }
+    draw(targetCtx) {
+        targetCtx.globalAlpha = this.life / this.maxLife;
+        targetCtx.fillStyle = this.color;
+        targetCtx.beginPath(); targetCtx.arc(this.x, this.y, this.radius, 0, Math.PI*2); targetCtx.fill();
+        targetCtx.globalAlpha = 1;
+    }
+}
+
+// Explosión (Actualizada para soportar Nukes visuals)
+class ExplosionEffect {
+    constructor(x, y, radius, isNuke = false) {
+        this.x = x; this.y = y;
+        this.isNuke = isNuke;
+        this.radius = 10;
+        this.maxRadius = radius;
+        this.duration = isNuke ? 60 : 15;
+        this.life = this.duration;
+    }
+    update() {
+        this.radius += (this.maxRadius - this.radius) * (this.isNuke ? 0.1 : 0.2);
+        this.life--;
+    }
+    draw(targetCtx) {
+        targetCtx.save();
+        let pct = this.life / this.duration;
+        targetCtx.shadowBlur = this.isNuke ? 100 * pct : 30;
+        targetCtx.shadowColor = this.isNuke ? "#ff0000" : "#ffcc00";
+        
+        let r, g, b;
+        if(this.isNuke) {
+            r = 255; g = 50 + 150 * (1-pct); b = 0; // De rojo a naranja
+        } else {
+            r = 255; g = 200; b = 50;
+        }
+
+        targetCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${pct})`;
+        targetCtx.beginPath();
+        targetCtx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+        targetCtx.fill();
+        targetCtx.restore();
+    }
+}
+
+/**
+ * === NUEVA CLASE: PAQUETE DE ARMA (DROP) ===
+ */
+class WeaponDrop {
+    constructor(x, y, weaponType) {
+        this.x = x; this.y = y;
+        this.weaponType = weaponType;
+        this.radius = 25;
+        this.vy = -5 - seededRandom() * 5; // Salto inicial
+        this.vx = (seededRandom() - 0.5) * 4;
+        this.angle = 0;
+    }
+
+    update() {
+        this.vy += PHYS.grav * 0.5;
+        this.vx *= 0.98;
+        
+        // Movimiento y colisión simple
+        let nextX = this.x + this.vx;
+        let nextY = this.y + this.vy;
+        let gx = Math.floor(nextX / WORLD.res);
+        let gy = Math.floor(nextY / WORLD.res);
+
+        if(grid[gx] && grid[gx][gy] === 1) {
+            this.vy *= -0.5; // Rebote suave en el suelo
+            this.vx *= 0.8;
+            this.y = Math.floor(this.y/WORLD.res) * WORLD.res + this.radius; // Evitar atasco
+        } else {
+            this.x = nextX; this.y = nextY;
+        }
+
+        // Flotar visualmente
+        this.angle += 0.05;
+        this.drawYOffset = Math.sin(this.angle) * 5;
+
+        // Colisión con el jugador
+        if(Math.hypot(this.x - player.x, this.y - player.y) < this.radius + player.radius) {
+            player.currentWeapon = this.weaponType;
+            this.dead = true;
+            // Efecto visual de recogida
+            for(let i=0; i<10; i++) particles.push(new Particle(this.x, this.y, this.weaponType.color));
+        }
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y + this.drawYOffset);
+        
+        // Brillo exterior
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = this.weaponType.color;
+        
+        // Caja neón
+        ctx.strokeStyle = this.weaponType.color;
+        ctx.lineWidth = 3;
+        ctx.fillStyle = "rgba(0,0,0,0.8)";
+        ctx.beginPath();
+        ctx.rect(-this.radius, -this.radius, this.radius*2, this.radius*2);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Texto del arma (ID)
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 20px 'Segoe UI'";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowBlur = 5;
+        ctx.fillText(this.weaponType.id, 0, 0);
+        
+        ctx.restore();
+    }
+}
+
+// Soldado (Actualizada para IA compleja, Arquetipos y Arsenal)
+class Soldier {
+    constructor(x, y, archetype, isPlayer = false) {
+        this.x = x; this.y = y;
+        this.isPlayer = isPlayer;
+        this.vy = 0; this.vx = 0; this.jet = 100;
+        this.lastShot = 0;
+        this.targetEnemy = null;
+
+        if(isPlayer) {
+            this.archetype = { name: "Jugador", color: "#00ffaa" };
+            this.color = "#00ffaa";
+            this.hp = 100;
+            this.radius = 20;
+            this.currentWeapon = WEAPON_TYPES.MACHINEGUN; // Empezar con metralleta
+        } else {
+            this.archetype = archetype;
+            this.color = archetype.color;
+            this.hp = archetype.hp;
+            this.radius = 20 * archetype.scale;
+            this.currentWeapon = archetype.weapon;
+        }
+    }
+
+    update() {
+        if(this.isPlayer) {
+            // Controles (Original)
+            if(keys['KeyA']) this.vx -= 0.8; if(keys['KeyD']) this.vx += 0.8;
+            if(keys['KeyW'] && this.jet > 0) { this.vy -= 1.5; this.jet -= 2.5; }
+            else this.jet = Math.min(100, this.jet + 1.2);
+            if(keys['Space']) this.shoot();
+            if(keys['KeyN']) { keys['KeyN'] = false; nextLevel(); }
+
+            this.findNearestEnemy();
+        } else {
+            // IA enemiga por arquetipo
+            if(player) {
+                let dx = player.x - this.x, dy = player.y - this.y;
+                let d = Math.hypot(dx, dy);
+                
+                // Rango de visión de la IA aumentado
+                if(d < 1500) { 
+                    // Movimiento horizontal
+                    this.vx += dx > 0 ? 0.35 : -0.35;
+                    
+                    // Lógica de salto (Jetpack) mejorada
+                    if(dy < -50 && this.jet > 30) this.vy -= 1.2;
+                    if(grid[Math.floor((this.x + this.vx*10)/WORLD.res)]?.[Math.floor(this.y/WORLD.res)] === 1 && this.jet > 50) this.vy -= 2;
+
+                    // Lógica de disparo enemiga
+                    let shootChance = 0.015;
+                    let shootRange = 800;
+                    
+                    // Ajustes por arma enemiga
+                    if(this.currentWeapon === WEAPON_TYPES.MG) { shootRange = 1000; shootChance = 0.1; }
+                    if(this.currentWeapon === WEAPON_TYPES.SG) { shootRange = 500; shootChance = 0.03; }
+                    if(this.currentWeapon === WEAPON_TYPES.NK) { shootRange = 1200; shootChance = 0.005; }
+
+                    if(seededRandom() < shootChance && d < shootRange) this.shoot();
+                }
+            }
+        }
+
+        this.vy += PHYS.grav;
+        this.vx *= PHYS.frict;
+
+        // Sub-stepping (Original)
+        for(let i=0; i<PHYS.steps; i++) {
+            this.x += this.vx / PHYS.steps;
+            this.resolveGridCollision('x');
+            this.y += this.vy / PHYS.steps;
+            this.resolveGridCollision('y');
+        }
+        
+        if(this.hp <= 0) this.explodeIntoParticles();
+    }
+
+    // Original, adaptado para limpiar texto de objetivo si no hay
+    findNearestEnemy() {
+        let minXDist = Infinity;
+        let oldTarget = this.targetEnemy;
+        this.targetEnemy = null;
+        entities.forEach(e => {
+            if(!e.isPlayer) {
+                let d = Math.hypot(e.x - this.x, e.y - this.y);
+                if(d < minXDist && d < 1200) {
+                    minXDist = d;
+                    this.targetEnemy = e;
+                }
+            }
+        });
+        
+        // Actualizar UI de objetivo
+        let targetTxt = document.getElementById('targ-weap');
+        if(this.targetEnemy) {
+            targetTxt.innerText = `OBJETIVO (${this.targetEnemy.archetype.name}): ${this.targetEnemy.currentWeapon.name}`;
+        } else {
+            targetTxt.innerText = "";
+        }
+    }
+
+    // Original
+    resolveGridCollision(axis) {
+        let left = Math.floor((this.x - this.radius) / WORLD.res);
+        let right = Math.floor((this.x + this.radius) / WORLD.res);
+        let top = Math.floor((this.y - this.radius) / WORLD.res);
+        let bottom = Math.floor((this.y + this.radius) / WORLD.res);
+
+        for (let x = left; x <= right; x++) {
+            for (let y = top; y <= bottom; y++) {
+                if (grid[x] && grid[x][y] === 1) {
+                    if (axis === 'x') {
+                        this.x = (this.vx > 0) ? x * WORLD.res - this.radius - 0.01 : (x + 1) * WORLD.res + this.radius + 0.01;
+                        this.vx *= -PHYS.bounce;
+                    } else {
+                        this.y = (this.vy > 0) ? y * WORLD.res - this.radius - 0.01 : (y + 1) * WORLD.res + this.radius + 0.01;
+                        this.vy *= -PHYS.bounce;
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    // Actualizada para el sistema de Arsenal multibalas
+    shoot() {
+        let w = this.currentWeapon;
+        if(Date.now() - this.lastShot < w.cooldown) return;
+        
+        let tx, ty;
+        if(this.isPlayer) {
+            if(!this.targetEnemy) return;
+            tx = this.targetEnemy.x; ty = this.targetEnemy.y;
+        } else {
+            tx = player.x; ty = player.y;
+        }
+
+        let baseAngle = Math.atan2(ty - this.y, tx - this.x);
+
+        for(let i=0; i < w.count; i++) {
+            // Aplicar dispersión (spread)
+            let angle = baseAngle + (seededRandom() - 0.5) * w.spread;
+            rockets.push(new Rocket(this.x, this.y, angle, w, this));
+        }
+
+        // Efecto de retroceso visual
+        let rec = w.expPush * 0.1;
+        this.vx -= Math.cos(baseAngle) * rec;
+        this.vy -= Math.sin(baseAngle) * rec;
+
+        this.lastShot = Date.now();
+    }
+
+    explodeIntoParticles() {
+        // Drop de arma si es enemigo (50% de probabilidad)
+        if(!this.isPlayer && seededRandom() < 0.5) {
+            weaponDrops.push(new WeaponDrop(this.x, this.y, this.currentWeapon));
+        }
+
+        // Partículas (Original + escalado)
+        let pCount = this.isPlayer ? 25 : 15 * this.archetype.scale;
+        for(let i=0; i<pCount; i++) {
+            particles.push(new Particle(this.x, this.y, this.color));
+        }
+        
+        // Explosión visual (Original + escalado por arma)
+        explosions.push(new ExplosionEffect(this.x, this.y, 130 * (this.isPlayer ? 1 : this.archetype.scale)));
+
+        if(this.isPlayer) {
+            this.currentWeapon = WEAPON_TYPES.MACHINEGUN; // Reset arma al morir
+            this.hp = 100; this.respawn();
+        } else {
+            entities = entities.filter(e => e !== this);
+        }
+    }
+
+    // Original
+    respawn() {
+        this.vx = 0; this.vy = 0;
+        let found = false;
+        while(!found) {
+            let rx = Math.floor(seededRandom() * grid.length);
+            let ry = Math.floor(seededRandom() * grid[0].length);
+            if(grid[rx] && grid[rx][ry] === 0) {
+                this.x = rx * WORLD.res + WORLD.res/2;
+                this.y = ry * WORLD.res + WORLD.res/2;
+                if(!this.isPlayer) this.hp = this.archetype.hp; // Reset HP enemigos
+                found = true;
+            }
+        }
+    }
+
+    // Original + Nombre arquetipo
+    draw() {
+        if(this.isPlayer && this.targetEnemy) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0, 255, 170, 0.4)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 10]);
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#00ffaa";
+            ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(this.targetEnemy.x, this.targetEnemy.y); ctx.stroke();
+            ctx.restore();
+        }
+
+        ctx.save();
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+        
+        ctx.fillStyle = "#000";
+        let angle = Math.atan2(this.vy, this.vx);
+        ctx.beginPath(); ctx.arc(this.x + Math.cos(angle)*8, this.y + Math.sin(angle)*8, 4, 0, Math.PI*2); ctx.fill();
+        
+        // Dibujar nombre/arquetipo
+        if(!this.isPlayer) {
+            ctx.fillStyle = "#fff";
+            ctx.font = "12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(this.archetype.name, this.x, this.y - this.radius - 5);
+        }
+        ctx.restore();
+    }
+}
+
+// Proyectil (Actualizada para soportar múltiples tipos de armas)
+class Rocket {
+    constructor(x, y, angle, weaponType, owner) {
+        this.x = x; this.y = y; this.owner = owner;
+        this.w = weaponType;
+        let s = this.w.speed;
+        // Variación ligera de velocidad
+        s *= (0.9 + seededRandom() * 0.2); 
+        this.vx = Math.cos(angle) * s; 
+        this.vy = Math.sin(angle) * s;
+        this.dead = false;
+        // Color del proyectil basado en el arma, no en el dueño
+        this.color = this.w.color;
+        this.birth = Date.now();
+    }
+    
+    update() {
+        this.x += this.vx; this.y += this.vy;
+        
+        // Humo visual para misiles pesados
+        if(this.w.smoky && seededRandom() < 0.3) {
+            particles.push(new Particle(this.x, this.y, "#555"));
+        }
+
+        let gx = Math.floor(this.x/WORLD.res), gy = Math.floor(this.y/WORLD.res);
+        
+        if(!grid[gx] || grid[gx][gy] === 1) {
+            this.explode(this.x, this.y);
+            return;
+        }
+
+        // Autodestrucción por tiempo (para balas de metralleta)
+        if(this.w === WEAPON_TYPES.MG && Date.now() - this.birth > 1000) {
+             this.explode(this.x, this.y); return;
+        }
+
+        entities.forEach(e => {
+            if(e !== this.owner && Math.hypot(e.x-this.x, e.y-this.y) < e.radius) {
+                this.explode(e.x, e.y);
+            }
+        });
+    }
+
+    explode(ex, ey) {
+        if(this.dead) return;
+        this.dead = true;
+        
+        // Efecto visual (Actualizado)
+        explosions.push(new ExplosionEffect(ex, ey, this.w.expRad, this.w.nuke));
+
+        // Mecanismo de daño (Original adaptado a variables del arma)
+        entities.forEach(e => {
+            let d = Math.hypot(e.x - ex, e.y - ey);
+            if(d < this.w.expRad) { 
+                let pct = (1 - d / this.w.expRad);
+                e.hp -= pct * this.w.damage; 
+                
+                let ang = Math.atan2(e.y - ey, e.x - ex); 
+                e.vx += Math.cos(ang) * pct * this.w.expPush; 
+                e.vy += Math.sin(ang) * pct * this.w.expPush; 
+            }
+        });
+    }
+
+    draw() {
+        ctx.save();
+        ctx.fillStyle = "#fff";
+        ctx.shadowBlur = this.w.nuke ? 20 : 10;
+        ctx.shadowColor = this.color;
+        
+        // Tamaño visual de la bala
+        let size = this.w.nuke ? 10 : (this.w === WEAPON_TYPES.MG ? 3 : 5);
+        ctx.fillRect(this.x - size/2, this.y - size/2, size, size);
+        ctx.restore();
+    }
+}
+
+/** * SISTEMA DE RENDERIZADO Y BUCLE PRINCIPAL
+ */
+
+// Original + Drops
+function drawMinimap() {
+    mCtx.clearRect(0, 0, mCanvas.width, mCanvas.height);
+    const cols = grid.length;
+    const rows = grid[0].length;
+    const scale = Math.min(mCanvas.width / (cols * WORLD.res), mCanvas.height / (rows * WORLD.res));
+    
+    mCtx.fillStyle = 'rgba(0, 255, 170, 0.3)';
+    for(let x=0; x<cols; x++) {
+        for(let y=0; y<rows; y++) {
+            if(grid[x][y] === 1) {
+                mCtx.fillRect(x * WORLD.res * scale, y * WORLD.res * scale, WORLD.res * scale, WORLD.res * scale);
+            }
+        }
+    }
+
+    // Paquetes en minimapa (puntos amarillos)
+    weaponDrops.forEach(d => {
+        mCtx.fillStyle = "#ffff00";
+        mCtx.fillRect(d.x * scale - 2, d.y * scale - 2, 4, 4);
+    });
+
+    entities.forEach(e => {
+        mCtx.fillStyle = e.isPlayer ? "#00ffaa" : "#ff4444";
+        mCtx.beginPath(); mCtx.arc(e.x * scale, e.y * scale, 3 * (e.isPlayer?1:e.archetype.scale), 0, Math.PI*2); mCtx.fill();
+    });
+
+    mCtx.strokeStyle = "#fff";
+    mCtx.lineWidth = 1;
+    mCtx.strokeRect(cam.x * scale, cam.y * scale, canvas.width * scale, canvas.height * scale);
+}
+
+// Original + Limpieza de Drops
+function nextLevel() {
+    currentLevel++;
+    rockets = []; particles = []; explosions = []; weaponDrops = [];
+    generateMap(currentLevel);
+    initEntities(); // Re-inicializar enemigos
+}
+
+// Separada lógica de entidades para poder reiniciar el nivel
+function initEntities() {
+     if(!player) {
+         player = new Soldier(0,0, null, true);
+     }
+     player.respawn();
+     entities = [player];
+     
+     // Cantidad y dificultad de enemigos escalada por nivel
+     let enemyCount = 3 + Math.floor(currentLevel * 1.5);
+     for(let i=0; i < enemyCount; i++) {
+        // Selección de arquetipo basada en probabilidad (más pesados en niveles altos)
+        let roll = seededRandom() * (1 + currentLevel * 0.1);
+        let arch;
+        if(roll < 0.7) arch = ENEMY_ARCHETYPES[0]; // Recluta
+        else if(roll < 1.2) arch = ENEMY_ARCHETYPES[2]; // Asaltante
+        else if(roll < 1.6) arch = ENEMY_ARCHETYPES[1]; // Artillero
+        else arch = ENEMY_ARCHETYPES[3]; // DEMOLEDOR
+
+        let e = new Soldier(0,0, arch); 
+        e.respawn(); 
+        entities.push(e); 
+    }
+}
+
+// Original adaptada
+function init() {
+    mCanvas.width = 240; mCanvas.height = 180;
+    generateMap(currentLevel);
+    initEntities();
+}
+
+function loop() {
+    gameTime++;
+    
+    // Original Camara
+    cam.x += (player.x - canvas.width/2 - cam.x) * 0.1;
+    cam.y += (player.y - canvas.height/2 - cam.y) * 0.1;
+    cam.x = Math.max(0, Math.min(cam.x, WORLD.width - canvas.width));
+    cam.y = Math.max(0, Math.min(cam.y, WORLD.height - canvas.height));
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save(); 
+    ctx.translate(-cam.x, -cam.y);
+
+    // 1. Rejilla Neón (Original)
+    ctx.fillStyle = hatchPattern;
+    const cols = grid.length; const rows = grid[0].length;
+    for(let x=0; x<cols; x++) {
+        for(let y=0; y<rows; y++) {
+            if(grid[x][y] === 1) {
+                let rx = x * WORLD.res, ry = y * WORLD.res;
+                if(rx + WORLD.res > cam.x && rx < cam.x + canvas.width &&
+                   ry + WORLD.res > cam.y && ry < cam.y + canvas.height) {
+                    ctx.fillRect(rx, ry, WORLD.res, WORLD.res);
+                    ctx.strokeStyle = "#00ffaa"; ctx.lineWidth = 2; ctx.strokeRect(rx, ry, WORLD.res, WORLD.res);
+                }
+            }
+        }
+    }
+
+    // 2. NUEVO: Actualizar y dibujar Drops de Armas
+    weaponDrops = weaponDrops.filter(d => !d.dead);
+    weaponDrops.forEach(d => { d.update(); d.draw(); });
+
+    // 3. Cohetes (Original)
+    rockets = rockets.filter(r => !r.dead);
+    rockets.forEach(r => { r.update(); r.draw(); });
+
+    // 4. Partículas (Original)
+    particles = particles.filter(p => p.life > 0);
+    particles.forEach(p => { p.update(); p.draw(ctx); });
+
+    // 5. Explosiones (Original)
+    explosions = explosions.filter(e => e.life > 0);
+    explosions.forEach(e => { e.update(); e.draw(ctx); });
+
+    // 6. Soldados (Original)
+    entities.forEach(e => { e.update(); e.draw(); });
+    
+    // Condición de victoria de nivel (Original)
+    if (entities.length == 1 && entities[0] === player) { nextLevel(); }
+
+    ctx.restore();
+    
+    // UI (Actualizada con info de arma)
+    document.getElementById('hp-f').style.width = Math.max(0, player.hp) + "%";
+    document.getElementById('jet-f').style.width = Math.max(0, player.jet) + "%";
+    
+    let weapNm = document.getElementById('weap-nm');
+    weapNm.innerText = player.currentWeapon.name;
+    weapNm.style.color = player.currentWeapon.color;
+    weapNm.style.textShadow = `0 0 5px ${player.currentWeapon.color}`;
+    
+    drawMinimap();
+    requestAnimationFrame(loop);
+}
+
+// Original
+window.onkeydown = e => keys[e.code] = true;
+window.onkeyup = e => keys[e.code] = false;
+
+init(); 
+loop();
+</script>
+</body>
+</html>
