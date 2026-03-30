@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Rubber Rocket: Bola1 - Tactical Warfare</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; user-select: none; }
+        canvas { display: block; }
+        
+        .ui { 
+            position: absolute; top: 15px; left: 15px; 
+            background: rgba(0, 10, 10, 0.85); padding: 15px; 
+            border-radius: 12px; border: 2px solid #00ffaa; 
+            width: 220px; pointer-events: none; 
+            box-shadow: 0 0 20px rgba(0, 255, 170, 0.3); z-index: 10;
+        }
+        .team-indicator { font-size: 14px; font-weight: bold; text-align: center; margin-bottom: 10px; padding: 5px; border-radius: 4px; text-transform: uppercase; }
+        .team-blue-bg { background: rgba(0, 100, 255, 0.3); border: 1px solid #0066ff; color: #00ccff; }
+        .team-red-bg { background: rgba(255, 0, 68, 0.3); border: 1px solid #ff0044; color: #ff5588; }
+        
+        .weapon-info { background: rgba(255, 255, 255, 0.05); border-radius: 6px; padding: 8px; margin-bottom: 10px; text-align: center; }
+        .weapon-name { font-size: 14px; font-weight: bold; color: #00ffaa; }
+        .inventory-slots { display: flex; justify-content: center; gap: 5px; margin-top: 5px; }
+        .slot { font-size: 9px; padding: 2px 4px; border: 1px solid #444; color: #444; border-radius: 3px; }
+        .slot.unlocked { border-color: #00ffaa; color: #00ffaa; }
+
+        .stat-label { font-size: 10px; color: #aaa; margin-top: 5px; text-transform: uppercase; }
+        .bar { width: 100%; height: 6px; background: #111; margin: 3px 0; border-radius: 3px; overflow: hidden; border: 1px solid #333; }
+        .fill { height: 100%; transition: width 0.1s; }
+        
+        .scoreboard {
+            position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 25px; background: rgba(0,0,0,0.85);
+            padding: 10px 25px; border-radius: 0 0 20px 20px; border: 1px solid #00ffaa; z-index: 5;
+        }
+        .score-item { text-align: center; min-width: 90px; }
+        .score-val { font-size: 28px; font-weight: bold; line-height: 1; }
+        .score-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.8; }
+
+        #chat-box {
+            position: absolute; top: 85px; left: 50%; transform: translateX(-50%);
+            width: 700px; height: 70px; overflow: hidden;
+            background: rgba(0,0,0,0.3); pointer-events: none;
+            display: flex; flex-direction: column-reverse; font-size: 13px; font-weight: bold;
+        }
+        .chat-msg { padding: 2px 12px; animation: slideIn 0.2s ease-out; text-shadow: 1px 1px 2px #000; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .overlay-screen {
+            position: absolute; top: 140px; left: 50%; transform: translateX(-50%);
+            text-align: center; background: rgba(0,0,0,0.95);
+            padding: 30px 60px; border-radius: 20px; display: none; z-index: 100;
+        }
+        
+        #minimap { position: absolute; top: 15px; right: 15px; width: 200px; height: 150px; background: rgba(0,0,0,0.8); border: 2px solid #00ffaa; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div class="scoreboard">
+        <div class="score-item" style="color: #00ccff;">
+            <div class="score-label">Bando Azul</div>
+            <div class="score-val" id="score-blue">0</div>
+        </div>
+        <div style="color: #00ffaa; font-size: 20px; font-weight: bold;">VS</div>
+        <div class="score-item" style="color: #ff0044;">
+            <div class="score-label">Bando Rojo</div>
+            <div class="score-val" id="score-red">0</div>
+        </div>
+    </div>
+
+    <div id="chat-box"></div>
+
+    <div class="ui">
+        <div id="p-team-tag" class="team-indicator">EQUIPO AZUL</div>
+        <div class="weapon-info">
+            <div class="weapon-name" id="weap-nm">Metralleta</div>
+            <div class="inventory-slots" id="inv-gui">
+                <div id="slot-MG" class="slot unlocked">MG</div>
+                <div id="slot-SG" class="slot">SG</div>
+                <div id="slot-RK" class="slot">RK</div>
+                <div id="slot-NK" class="slot">NK</div>
+            </div>
+        </div>
+        <div class="stat-label">Integridad Bola1</div>
+        <div class="bar"><div id="hp-f" class="fill" style="background: #ff0044; width: 100%;"></div></div>
+        <div class="stat-label">Propulsión</div>
+        <div class="bar"><div id="jet-f" class="fill" style="background: #00ccff; width: 100%;"></div></div>
+    </div>
+
+    <div id="death-screen" class="overlay-screen" style="border: 2px solid #ff0044;">
+        <h1 style="color:#ff0044; margin:0; text-transform: uppercase;">Fracaso</h1>
+        <div id="death-msg" style="margin:15px 0; font-size: 18px;">TU BANDO HA SIDO DERROTADO</div>
+        <div style="font-size:12px; color:#aaa;">Presiona [ESPACIO] para reintentar el despliegue</div>
+    </div>
+
+    <div id="victory-screen" class="overlay-screen" style="border: 2px solid #00ffaa;">
+        <h1 style="color:#00ffaa; margin:0; text-transform: uppercase;">Éxito</h1>
+        <div style="margin:15px 0; font-size: 18px;">EL BANDO ENEMIGO FUE DERROTADO</div>
+        <div style="font-size:12px; color:#aaa;">Presiona [ESPACIO] para avanzar al siguiente sector</div>
+    </div>
+    
+    <canvas id="minimap"></canvas>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const mCanvas = document.getElementById('minimap');
+const mCtx = mCanvas.getContext('2d');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const WORLD = { width: 4000, height: 3000, res: 80, threshold: 0.38 };
+const PHYS = { grav: 0.48, frict: 0.96, bounce: 0.3, steps: 6 };
+const BOT_NAMES = ["Viper", "Shadow", "Ghost", "Titan", "Rayo", "Nova", "Zero", "Rex", "Hunter", "Acid", "Void", "Cyborg", "Reaper", "Bolt", "Neon", "Delta", "Huntress", "Demon", "S4uron"];
+const BURLAS = ["Ahí quedó @X", "Duele, @X? Duele?", "Demasiado lento, @X", "Buen intento, @X", "Aprende a apuntar, @X", "Marquen a @X como DEPRECATED", "¿Eso es todo, @X?", "Suerte la próxima, @X", "Dominado, @X", "@X es wekito", "Para qué invitaron a @X?", "Ojalá no me toque jugar con @X la próxima partida", "Puedes usar las teclas 1,2,3,4 para cambiar de arma, @X", "Dispara usando ESPACIO y juega con autoaim mejor, @X", "Que alguien le quite el computador a @X xD", "@X huele a fracaso >.<", "@X no lo vio venir"];
+
+let timeScale = 1.0, isGameOver = false, isVictory = false;
+let deathsBlue = 0, deathsRed = 0;
+let grid = [], entities = [], rockets = [], particles = [], explosions = [], weaponDrops = [], barrels = [], keys = {};
+let player, cam = { x: 0, y: 0 }, currentLevel = 1;
+let mouseX = 0, mouseY = 0, isMouseDown = false, inventory = new Set(['MG']);
+
+const hatchPattern = (() => {
+    const p = document.createElement('canvas'); p.width = 32; p.height = 32;
+    const pctx = p.getContext('2d');
+    pctx.fillStyle = '#050a05'; pctx.fillRect(0, 0, 32, 32);
+    pctx.strokeStyle = '#00ffaa'; pctx.lineWidth = 3;
+    pctx.beginPath(); pctx.moveTo(0, 32); pctx.lineTo(32, 0);
+    pctx.stroke(); return ctx.createPattern(p, 'repeat');
+})();
+
+function generateMap(level) {
+    const cols = Math.ceil(WORLD.width / WORLD.res);
+    const rows = Math.ceil(WORLD.height / WORLD.res);
+    grid = Array(cols).fill().map((_, x) => Array(rows).fill(0).map((_, y) => 
+        (x <= 1 || x >= cols-2 || y <= 1 || y >= rows-2) ? 1 : (Math.random() < WORLD.threshold ? 1 : 0)
+    ));
+    for(let i=0; i<5; i++) {
+        let next = grid.map(arr => [...arr]);
+        for(let x=1; x<cols-1; x++) {
+            for(let y=1; y<rows-1; y++) {
+                let n = 0;
+                for(let ix=-1; ix<=1; ix++) for(let iy=-1; iy<=1; iy++) n += grid[x+ix][y+iy];
+                if (n > 4) next[x][y] = 1; else if (n < 4) next[x][y] = 0;
+            }
+        }
+        grid = next;
+    }
+}
+
+const WEAPON_TYPES = {
+    MG: { id: 'MG', name: "Metralleta", color: "#ccff00", cooldown: 110, speed: 36, spread: 0.08, count: 1, damage: 12, expRad: 15 },
+    SG: { id: 'SG', name: "Escopeta Neon", color: "#ff00ff", cooldown: 850, speed: 30, spread: 0.38, count: 12, damage: 16, expRad: 25 },
+    RK: { id: 'RK', name: "Lanzacohetes", color: "#00ffaa", cooldown: 700, speed: 24, spread: 0, count: 1, damage: 100, expRad: 170 },
+    NK: { id: 'NK', name: "Lanzador NUKE", color: "#ff4400", cooldown: 3500, speed: 12, spread: 0, count: 1, damage: 700, expRad: 650, nuke: true }
+};
+
+function addChat(sender, victim) {
+    let chance = victim.isPlayer ? 0.75 : 0.60;
+    if (Math.random() > chance) return;
+    const box = document.getElementById('chat-box');
+    const msg = document.createElement('div');
+    msg.className = 'chat-msg';
+    msg.style.color = sender.team === 'blue' ? '#00ccff' : '#ff5588';
+    let text = BURLAS[Math.floor(Math.random() * BURLAS.length)];
+    msg.innerText = `[${sender.name}]: ${text.replace('@X', '@' + victim.name)}`;
+    box.prepend(msg);
+    if(box.childNodes.length > 3) box.removeChild(box.lastChild);
+}
+
+class Soldier {
+    constructor(x, y, team, name, isPlayer = false) {
+        this.x = x; this.y = y; this.team = team; this.name = name; this.isPlayer = isPlayer;
+        this.vx = 0; this.vy = 0; this.radius = 20; this.hp = 100; this.jet = 100;
+        this.lastShot = 0; this.isDead = false;
+        this.color = team === 'blue' ? "#0066ff" : "#ff0044";
+        this.currentWeapon = WEAPON_TYPES.MG;
+        this.onGround = false;
+    }
+
+    update() {
+        if(this.isDead) return;
+
+        if(this.isPlayer) {
+            if(keys['KeyA']) this.vx -= 0.85 * timeScale;
+            if(keys['KeyD']) this.vx += 0.85 * timeScale;
+            if(keys['KeyW'] && this.jet > 0) { this.vy -= 1.6 * timeScale; this.jet -= 2.8 * timeScale; this.onGround = false; }
+            else { this.jet = Math.min(100, this.jet + 1.2 * timeScale); }
+            if(keys['Space'] || isMouseDown) this.shoot(isMouseDown);
+        } else {
+            let target = null; let minDist = 1500;
+            entities.forEach(e => { if(e.team !== this.team && !e.isDead) { let d = Math.hypot(e.x-this.x, e.y-this.y); if(d < minDist){ minDist=d; target=e; } } });
+            
+            if(target) {
+                this.vx += (target.x > this.x ? 0.4 : -0.4) * timeScale;
+                // Salto de combate: si el objetivo está arriba o hay un muro
+                if((target.y < this.y - 60 || this.checkWallAhead()) && this.onGround && Math.random() < 0.1) {
+                    this.vy = -13; this.onGround = false;
+                }
+                if(Math.random() < 0.03) this.shoot(false);
+            }
+        }
+
+        this.vy += PHYS.grav * timeScale;
+        this.vx *= Math.pow(PHYS.frict, timeScale);
+
+        for(let i=0; i<PHYS.steps; i++) {
+            this.x += (this.vx / PHYS.steps) * timeScale; this.resolveGridCollision('x');
+            this.y += (this.vy / PHYS.steps) * timeScale; this.resolveGridCollision('y');
+        }
+
+        if(this.hp <= 0) this.die();
+    }
+
+    checkWallAhead() {
+        let dir = this.vx > 0 ? 1 : -1;
+        let gx = Math.floor((this.x + dir * 40) / WORLD.res);
+        let gy = Math.floor(this.y / WORLD.res);
+        return grid[gx] && grid[gx][gy] === 1;
+    }
+
+    resolveGridCollision(axis) {
+        let left = Math.floor((this.x - this.radius) / WORLD.res);
+        let right = Math.floor((this.x + this.radius) / WORLD.res);
+        let top = Math.floor((this.y - this.radius) / WORLD.res);
+        let bottom = Math.floor((this.y + this.radius) / WORLD.res);
+
+        for (let x = left; x <= right; x++) {
+            for (let y = top; y <= bottom; y++) {
+                if (grid[x] && grid[x][y] === 1) {
+                    if (axis === 'x') {
+                        this.x = (this.vx > 0) ? x * WORLD.res - this.radius - 0.01 : (x + 1) * WORLD.res + this.radius + 0.01;
+                        this.vx *= -PHYS.bounce;
+                    } else {
+                        if(this.vy > 0) this.onGround = true;
+                        this.y = (this.vy > 0) ? y * WORLD.res - this.radius - 0.01 : (y + 1) * WORLD.res + this.radius + 0.01;
+                        this.vy *= -PHYS.bounce;
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    shoot(isManual) {
+        let w = this.currentWeapon;
+        if(Date.now() - this.lastShot < w.cooldown) return;
+        let angle;
+        if(isManual && this.isPlayer) {
+            angle = Math.atan2((mouseY + cam.y) - this.y, (mouseX + cam.x) - this.x);
+        } else {
+            let target = null; let minDist = Infinity;
+            entities.forEach(e => { if(e.team !== this.team && !e.isDead){ let d=Math.hypot(e.x-this.x, e.y-this.y); if(d<minDist){ minDist=d; target=e;}} });
+            if(!target) angle = this.vx >= 0 ? 0 : Math.PI;
+            else angle = Math.atan2(target.y - this.y, target.x - this.x);
+        }
+        for(let i=0; i < (w.count || 1); i++) {
+            rockets.push(new Rocket(this.x, this.y, angle + (Math.random()-0.5)*w.spread, w, this));
+        }
+        this.lastShot = Date.now();
+    }
+
+    die(killer = null) {
+        if(this.isDead) return;
+        this.isDead = true;
+
+        // Sorry, Bola1. 
+        if (this.isPlayer){
+            inventory = new Set(['MG']);
+            document.getElementById('slot-SG').classList.remove('unlocked');
+            document.getElementById('slot-RK').classList.remove('unlocked');
+            document.getElementById('slot-NK').classList.remove('unlocked');
+            player.currentWeapon = WEAPON_TYPES.MG;
+        }
+        if(this.team === 'blue') deathsBlue++; else deathsRed++;
+        updateScore();
+        if(killer && killer !== this) addChat(killer, this);
+        for(let i=0; i<150; i++) particles.push(new Particle(this.x, this.y, this.color));
+        explosions.push(new ExplosionEffect(this.x, this.y, 120));
+        if(deathsBlue >= 100 || deathsRed >= 100) checkEndGame();
+        setTimeout(() => { if(!isGameOver && !isVictory) this.respawn(); }, 2500);
+    }
+
+    respawn() {
+        this.hp = 100; this.vx = 0; this.vy = 0; this.isDead = false;
+        let rx, ry;
+        do { rx = Math.floor(Math.random() * (WORLD.width/WORLD.res)); ry = Math.floor(Math.random() * (WORLD.height/WORLD.res)); } while(grid[rx][ry] === 1);
+        this.x = rx * WORLD.res + WORLD.res/2; this.y = ry * WORLD.res + WORLD.res/2;
+    }
+
+    draw() {
+        if(this.isDead) return;
+        ctx.save();
+        ctx.shadowBlur = 12; ctx.shadowColor = this.color;
+        ctx.fillStyle = this.color;
+        ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = "#fff"; ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
+        ctx.fillText(this.name, this.x, this.y - 28);
+        ctx.restore();
+    }
+}
+
+class ExplosiveBarrel {
+    constructor(x, y) { this.x = x; this.y = y; this.hp = 30; this.radius = 25; this.dead = false; }
+    update() { if(this.hp <= 0) this.explode(); }
+    explode() {
+        this.dead = true;
+        explosions.push(new ExplosionEffect(this.x, this.y, 250, true));
+        [...entities, ...barrels].forEach(e => {
+            let d = Math.hypot(e.x - this.x, e.y - this.y);
+            if(d < 250 && e !== this) { 
+                e.hp -= (1 - d/250) * 200;
+                if(e.hp <= 0 && e instanceof Soldier) e.die();
+            }
+        });
+    }
+    draw() {
+        ctx.fillStyle = "#ffaa00"; ctx.strokeStyle = "#ff4400"; ctx.lineWidth = 3;
+        ctx.fillRect(this.x - 15, this.y - 20, 30, 40);
+        ctx.strokeRect(this.x - 15, this.y - 20, 30, 40);
+        ctx.fillStyle = "#000"; ctx.font = "bold 12px Arial"; ctx.textAlign="center"; ctx.fillText("!", this.x, this.y+5);
+    }
+}
+
+class WeaponDrop {
+    constructor(x, y, type) { this.x = x; this.y = y; this.type = type; this.dead = false; this.t = 0; }
+    update() {
+        this.t += 0.1;
+        entities.forEach(e => {
+            if(!e.isDead && Math.hypot(e.x-this.x, e.y-this.y) < 40) {
+                e.currentWeapon = this.type;
+                if(e.isPlayer) { inventory.add(this.type.id); document.getElementById('slot-'+this.type.id).classList.add('unlocked'); }
+                this.dead = true;
+            }
+        });
+    }
+    draw() {
+        ctx.save(); ctx.translate(this.x, this.y + Math.sin(this.t)*5);
+        ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.strokeStyle = this.type.color; ctx.lineWidth = 2;
+        ctx.strokeRect(-15,-15,30,30); ctx.fillRect(-15,-15,30,30);
+        ctx.fillStyle = this.type.color; ctx.font = "bold 10px Arial"; ctx.textAlign="center"; ctx.fillText(this.type.id, 0, 4);
+        ctx.restore();
+    }
+}
+
+class Rocket {
+    constructor(x, y, angle, weapon, owner) {
+        this.x = x; this.y = y; this.w = weapon; this.owner = owner;
+        this.vx = Math.cos(angle) * weapon.speed; this.vy = Math.sin(angle) * weapon.speed;
+    }
+    update() {
+        this.x += this.vx * timeScale; this.y += this.vy * timeScale;
+        let gx = Math.floor(this.x/WORLD.res), gy = Math.floor(this.y/WORLD.res);
+        if(!grid[gx] || grid[gx][gy] === 1) { this.explode(); return; }
+        [...entities, ...barrels].forEach(e => { if(e !== this.owner && !e.isDead && Math.hypot(e.x-this.x, e.y-this.y) < (e.radius||20)) this.explode(); });
+    }
+    explode() {
+        this.dead = true;
+        explosions.push(new ExplosionEffect(this.x, this.y, this.w.expRad, this.w.nuke));
+        [...entities, ...barrels].forEach(e => {
+            let d = Math.hypot(e.x - this.x, e.y - this.y);
+            if(d < this.w.expRad) {
+                e.hp -= (1 - d/this.w.expRad) * this.w.damage;
+                if(e.hp <= 0 && !e.isDead && e instanceof Soldier) e.die(this.owner);
+                let ang = Math.atan2(e.y-this.y, e.x-this.x);
+                e.vx += Math.cos(ang) * (this.w.expRad / 10); e.vy += Math.sin(ang) * (this.w.expRad / 10);
+            }
+        });
+    }
+    draw() { ctx.fillStyle = this.w.color; ctx.fillRect(this.x-2, this.y-2, 4, 4); }
+}
+
+class Particle { constructor(x,y,c){this.x=x;this.y=y;this.c=c;this.vx=(Math.random()-0.5)*12;this.vy=(Math.random()-0.5)*12;this.life=60;} update(){this.x+=this.vx;this.y+=this.vy;this.life--;} draw(t){t.globalAlpha=this.life/60;t.fillStyle=this.c;t.beginPath();t.arc(this.x,this.y,Math.round(Math.random()*4),0,Math.PI*2);t.fill();t.globalAlpha=0.75;} }
+class ExplosionEffect { constructor(x,y,r,n){this.x=x;this.y=y;this.mr=r;this.n=n;this.r=0;this.life=20;} update(){this.r+=(this.mr-this.r)*0.25;this.life--;} draw(t){t.fillStyle=this.n?`rgba(255,100,0,${this.life/20})`:`rgba(255,255,255,${this.life/20})`;t.beginPath();t.arc(this.x,this.y,this.r,0,Math.PI*2);t.fill();} }
+
+function updateScore() { document.getElementById('score-blue').innerText = deathsBlue; document.getElementById('score-red').innerText = deathsRed; }
+
+function checkEndGame() {
+    let playerWon = (player.team === 'blue' && deathsBlue < 100) || (player.team === 'red' && deathsRed < 100);
+    timeScale = 0.15;
+    if(playerWon) { document.getElementById('victory-screen').style.display = 'block'; isVictory = true; }
+    else { document.getElementById('death-screen').style.display = 'block'; isGameOver = true; }
+}
+
+function spawnWeapon() {
+    let rx, ry; const types = Object.values(WEAPON_TYPES);
+    do { rx = Math.floor(Math.random()*grid.length); ry = Math.floor(Math.random()*grid[0].length); } while(grid[rx][ry]===1);
+    weaponDrops.push(new WeaponDrop(rx*WORLD.res+40, ry*WORLD.res+40, types[Math.floor(Math.random()*types.length)]));
+}
+
+function initLevel() {
+    deathsBlue = 0; deathsRed = 0; updateScore();
+    isGameOver = false; isVictory = false; timeScale = 1.0;
+    document.getElementById('death-screen').style.display = 'none';
+    document.getElementById('victory-screen').style.display = 'none';
+    generateMap(currentLevel);
+    
+    let pTeam = Math.random() > 0.5 ? 'blue' : 'red';
+    player = new Soldier(0,0, pTeam, "Bola1", true); player.respawn();
+    const tag = document.getElementById('p-team-tag');
+    tag.innerText = "BANDO " + (pTeam === 'blue' ? "AZUL" : "ROJO");
+    tag.className = "team-indicator " + (pTeam === 'blue' ? "team-blue-bg" : "team-red-bg");
+
+    entities = [player];
+    for(let i=0; i<20; i++) {
+        let t = (i < 10) ? 'blue' : 'red';
+        if(t === pTeam && i === 6) t = (pTeam==='blue'?'red':'blue');
+        let bot = new Soldier(0,0, t, BOT_NAMES[i % BOT_NAMES.length]); bot.respawn(); entities.push(bot);
+    }
+    barrels = [];
+    for(let i=0; i<15; i++) {
+        let bx, by; do { bx = Math.floor(Math.random()*grid.length); by = Math.floor(Math.random()*grid[0].length); } while(grid[bx][by]===1);
+        barrels.push(new ExplosiveBarrel(bx*WORLD.res+40, by*WORLD.res+40));
+    }
+    weaponDrops = []; for(let i=0; i<6; i++) spawnWeapon();
+}
+
+function loop() {
+    ctx.fillStyle = "#000"; ctx.fillRect(0,0, canvas.width, canvas.height);
+    cam.x += (player.x - canvas.width/2 - cam.x) * 0.1; cam.y += (player.y - canvas.height/2 - cam.y) * 0.1;
+
+    ctx.save(); ctx.translate(-cam.x, -cam.y);
+    ctx.fillStyle = hatchPattern;
+    for(let x=0; x<grid.length; x++) for(let y=0; y<grid[0].length; y++) if(grid[x][y]===1) {
+        ctx.fillRect(x*WORLD.res, y*WORLD.res, WORLD.res, WORLD.res);
+        ctx.strokeStyle = "#00ffaa"; ctx.lineWidth = 1; ctx.strokeRect(x*WORLD.res, y*WORLD.res, WORLD.res, WORLD.res);
+    }
+    
+    if(Math.random() < 0.005) spawnWeapon();
+    weaponDrops = weaponDrops.filter(d => !d.dead); weaponDrops.forEach(d => { d.update(); d.draw(); });
+    barrels = barrels.filter(b => !b.dead); barrels.forEach(b => { b.update(); b.draw(); });
+    rockets = rockets.filter(r => !r.dead); rockets.forEach(r => { r.update(); r.draw(); });
+    particles = particles.filter(p => p.life > 0); particles.forEach(p => { p.update(); p.draw(ctx); });
+    explosions = explosions.filter(e => e.life > 0); explosions.forEach(e => { e.update(); e.draw(ctx); });
+    entities.forEach(e => { e.update(); e.draw(); });
+    ctx.restore();
+
+    document.getElementById('hp-f').style.width = Math.max(0, player.hp) + "%";
+    document.getElementById('jet-f').style.width = player.jet + "%";
+    document.getElementById('weap-nm').innerText = player.currentWeapon.name;
+    document.getElementById('weap-nm').style.color = player.currentWeapon.color;
+
+    mCtx.fillStyle="#000"; mCtx.fillRect(0,0,200,150);
+    let s = 200 / WORLD.width;
+    mCtx.fillStyle="rgba(0,255,170,0.3)";
+    for(let x=0; x<grid.length; x++) for(let y=0; y<grid[0].length; y++) if(grid[x][y]===1) mCtx.fillRect(x*WORLD.res*s, y*WORLD.res*s, WORLD.res*s, WORLD.res*s);
+    entities.forEach(e => { if(!e.isDead){ mCtx.fillStyle=e.team==='blue'?'#0cf':'#f04'; mCtx.fillRect(e.x*s, e.y*s, 4, 4); }});
+
+    requestAnimationFrame(loop);
+}
+
+window.onkeydown = e => {
+    keys[e.code] = true;
+    if((isGameOver || isVictory) && e.code === 'Space') { if(isVictory) currentLevel++; initLevel(); }
+    if(inventory.has('MG') && e.key === '1') player.currentWeapon = WEAPON_TYPES.MG;
+    if(inventory.has('SG') && e.key === '2') player.currentWeapon = WEAPON_TYPES.SG;
+    if(inventory.has('RK') && e.key === '3') player.currentWeapon = WEAPON_TYPES.RK;
+    if(inventory.has('NK') && e.key === '4') player.currentWeapon = WEAPON_TYPES.NK;
+};
+window.onkeyup = e => keys[e.code] = false;
+window.onmousemove = e => { mouseX = e.clientX; mouseY = e.clientY; };
+window.onmousedown = e => { if(e.button === 0) isMouseDown = true; };
+window.onmouseup = e => { if(e.button === 0) isMouseDown = false; };
+
+initLevel();
+loop();
+</script>
+</body>
+</html>
