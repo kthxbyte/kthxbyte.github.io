@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>The Backrooms - CRT/VHS Simulation</title>
+    <style>
+        /* VCR OSD Mono WebFont by Riciery Leal  */
+        /* https://mothexists.neocities.org/webfonts_VCR-OSD-Mono/example */
+        @font-face {
+            font-family: 'VCR OSD Mono';
+            src: url('VCR-OSD-Mono.ttf.woff') format('woff');
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'VCR OSD Mono', monospace;
+        }
+
+        #vhs-ui {
+            position: absolute;
+            top: 40px;
+            left: 50px;
+            color: rgba(100, 220, 20, 0.9);
+            font-size: 2.5rem;
+            pointer-events: none;
+            text-transform: uppercase;
+            /* Efecto de sangrado de luz y sombra para look analógico */
+            text-shadow: 2px 0px 1px rgba(255,0,0,0.5), -2px 0px 1px rgba(0,0,255,0.5), 0 0 5px rgba(255,255,255,0.2);
+            letter-spacing: 2px;
+            z-index: 10;
+            line-height: 1.4;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="vhs-ui">
+        ● REC <span id="clock">00:00:00</span><br>
+        SP  -0:12:34<br>
+        <span style="font-size: 2.5rem;">VCR PLAY ▷</span>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+
+    <script>
+        let scene, camera, renderer, clock, composer, vhsPass;
+        let controls = { fwd: false, bck: false, lft: false, rgt: false, mouseX: 0, mouseY: 0 };
+        const walls = [];
+
+        // --- GENERADOR DE TEXTURAS (Mismo de antes) ---
+        function createBackroomsTexture(color1, color2, isWall) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128; // Resolución más baja para texturas
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = color1;
+            ctx.fillRect(0, 0, 128, 128);
+            for(let i = 0; i < 1000; i++) {
+                ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.08})`;
+                ctx.fillRect(Math.random()*128, Math.random()*128, 2, 2);
+            }
+            if(isWall) {
+                ctx.strokeStyle = color2;
+                ctx.lineWidth = 1;
+                for(let i = 0; i < 128; i += 32) {
+                    ctx.beginPath();
+                    ctx.moveTo(i, 0); ctx.lineTo(i, 128); ctx.stroke();
+                }
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(2, 2);
+            return tex;
+        }
+
+        const wallTex = createBackroomsTexture('#d2b48c', '#bda27e', true);
+        const floorTex = createBackroomsTexture('#4a4a3a', '#3a3a2a', false);
+
+        // --- DEFINICIÓN DEL SHADER CRT/VHS ---
+        const VHS_CRT_Shader = {
+            uniforms: {
+                "tDiffuse": { value: null },
+                "time": { value: 0.0 },
+                "distort": { value: 0.2 }, // Intensidad curvatura CRT
+                "resolution": { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float time;
+                uniform float distort;
+                uniform vec2 resolution;
+                varying vec2 vUv;
+
+                // Función de ruido para estática
+                float noise(vec2 p) {
+                    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+                }
+
+                // Curvatura CRT (Pincushion distortion)
+                vec2 curve(vec2 uv) {
+                    uv = (uv - 0.5) * 2.0;
+                    uv *= 1.1; // 1.1	
+                    uv.x *= 1.0 + pow((abs(uv.y) / 5.0), 2.0);
+                    uv.y *= 1.0 + pow((abs(uv.x) / 4.0), 2.0);
+                    uv  = (uv / 2.0) + 0.5;
+                    uv =  uv * 0.91 + 0.04; // Pequeño margen
+                    return uv;
+                }
+
+                void main() {
+                    vec2 uv = vUv;
+                    
+                    // 1. Aplicar Curvatura CRT primero
+                    uv = curve(uv);
+
+                    // Cortar bordes si la curvatura se sale
+                    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                        return;
+                    }
+
+                    // 2. Artefactos de Tracking de VHS
+                    float look = uv.y + sin(time * 0.5) * 0.3; // Línea de tracking que sube/baja
+                    float jump = texture2D(tDiffuse, vec2(uv.x, look)).r;
+                    
+                    // Desplazamiento horizontal aleatorio sutil (jitter)
+                    if (noise(vec2(time, uv.y)) > 0.98) {
+                        uv.x += 0.05 * sin(time * 100.0);
+                    }
+                    
+                    // Barra de distorsión de tracking estática
+                    float bar = step(0.98, sin(uv.y * 10.0 + time * 3.0 + noise(vec2(time))*5.0));
+                    uv.x += bar * 0.02 * noise(vec2(time));
+
+                    // 3. Muestreo de Color y Aberración Cromática (Sangrado)
+                    vec4 color;
+                    color.r = texture2D(tDiffuse, vec2(uv.x + 0.003, uv.y)).r;
+                    color.g = texture2D(tDiffuse, uv).g;
+                    color.b = texture2D(tDiffuse, vec2(uv.x - 0.003, uv.y)).b;
+                    color.a = 1.0;
+
+                    // 4. Grano y Scanlines
+                    float s = sin(uv.y * resolution.y * 1.5) * 0.08; // Scanlines fijas
+                    color.rgb -= s;
+                    color.rgb += noise(uv + time) * 0.06; // Estática
+
+                    // 5. Vignette (Oscurecer bordes)
+                    float vignette = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y);
+                    color.rgb *= pow(16.0 * vignette, 0.3);
+
+                    gl_FragColor = color;
+                }
+            `
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a05);
+            scene.fog = new THREE.FogExp2(0x1a1a05, 0.15);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 50);
+            camera.position.set(0, 1.7, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            // Bajamos aún más la resolución interna para rendimiento y look retro
+            renderer.setPixelRatio(window.devicePixelRatio * 0.5); 
+            document.body.appendChild(renderer.domElement);
+
+            clock = new THREE.Clock();
+
+            // --- CONFIGURACIÓN DE POST-PROCESAMIENTO ---
+            composer = new THREE.EffectComposer(renderer);
+            
+            // 1. Pase de renderizado normal de la escena
+            const renderPass = new THREE.RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            // 2. Pase de Shader personalizado (VHS + CRT)
+            vhsPass = new THREE.ShaderPass(VHS_CRT_Shader);
+            vhsPass.renderToScreen = true; // Este es el último pase
+            composer.addPass(vhsPass);
+
+            // Luces fluorescentes (Mismo de antes)
+            for(let x = -15; x <= 15; x += 6) {
+                for(let z = -15; z <= 15; z += 6) {
+                    const light = new THREE.PointLight(0xffffcc, 0.7, 12);
+                    light.position.set(x, 3.8, z);
+                    scene.add(light);
+                    const lampGeo = new THREE.PlaneGeometry(1, 0.5);
+                    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                    const lamp = new THREE.Mesh(lampGeo, lampMat);
+                    lamp.position.set(x, 3.98, z);
+                    lamp.rotation.x = Math.PI / 2;
+                    scene.add(lamp);
+                }
+            }
+
+            buildMaze();
+
+            // Eventos de control y ratón
+            window.addEventListener('keydown', (e) => updateControls(e.code, true));
+            window.addEventListener('keyup', (e) => updateControls(e.code, false));
+            
+            document.addEventListener('click', () => renderer.domElement.requestPointerLock());
+            document.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === renderer.domElement) {
+                    camera.rotation.y -= e.movementX * 0.002;
+                    // Limitamos la rotación vertical
+                    camera.rotation.x = Math.max(-Math.PI/3, Math.min(Math.PI/3, camera.rotation.x - e.movementY * 0.002));
+                }
+            });
+
+            animate();
+        }
+
+        function updateControls(code, state) {
+            if(code === 'KeyW' || code === 'ArrowUp') controls.fwd = state;
+            if(code === 'KeyS' || code === 'ArrowDown') controls.bck = state;
+            if(code === 'KeyA' || code === 'ArrowLeft') controls.lft = state;
+            if(code === 'KeyD' || code === 'ArrowRight') controls.rgt = state;
+        }
+
+        function buildMaze() {
+            const wallMat = new THREE.MeshStandardMaterial({ map: wallTex });
+            const floorMat = new THREE.MeshStandardMaterial({ map: floorTex });
+            const pGeo = new THREE.PlaneGeometry(100, 100);
+            
+            const floor = new THREE.Mesh(pGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            scene.add(floor);
+
+            const ceiling = new THREE.Mesh(pGeo, wallMat);
+            ceiling.rotation.x = Math.PI / 2;
+            ceiling.position.y = 4;
+            scene.add(ceiling);
+
+            const geo = new THREE.BoxGeometry(4, 4, 4);
+            for(let i = 0; i < 50; i++) {
+                const wall = new THREE.Mesh(geo, wallMat);
+                wall.position.set(
+                    Math.floor(Math.random() * 10 - 5) * 4,
+                    2,
+                    Math.floor(Math.random() * 10 - 5) * 4
+                );
+                scene.add(wall);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // Actualizar tiempo en el shader (crucial para la estática animada)
+            vhsPass.uniforms.time.value = time;
+
+            // Movimiento
+            const speed = 2.5;
+            if(controls.fwd) camera.translateZ(-speed * dt);
+            if(controls.bck) camera.translateZ(speed * dt);
+            if(controls.lft) camera.translateX(-speed * dt);
+            if(controls.rgt) camera.translateX(speed * dt);
+
+            // Head bobbing sutil al caminar
+            if(controls.fwd || controls.bck || controls.lft || controls.rgt) {
+                camera.position.y = 1.7 + Math.sin(time * 8) * 0.03;
+                camera.rotation.z = Math.sin(time * 4) * 0.01; // Sutil balanceo
+            } else {
+                camera.position.y = 1.7; // Volver a altura normal parado
+                camera.rotation.z = 0;
+            }
+
+            // Actualizar reloj VHS
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toLocaleTimeString();
+
+            // IMPORTANTE: Renderizar usando el Composer, no el renderer
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+            vhsPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+        });
+
+        init();
+    </script>
+</body>
+</html>
