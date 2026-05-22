@@ -158,7 +158,7 @@
     <div id="level-intro">
         <div class="intro-box">
             <div class="intro-level" id="intro-level">NIVEL 1</div>
-            <div class="intro-countdown" id="intro-countdown">Ready in 3 seconds...</div>
+            <div class="intro-countdown" id="intro-countdown">Listo en 3 segundos...</div>
         </div>
     </div>
     <div class="ui">
@@ -1198,9 +1198,9 @@ function loop(timestamp) {
         let elapsed = performance.now() - levelIntro.start;
         let secs = Math.ceil(3 - elapsed / 1000);
         if (secs >= 2) {
-            document.getElementById('intro-countdown').innerText = `Ready in ${secs} seconds...`;
+            document.getElementById('intro-countdown').innerText = `Listo en ${secs} segundos...`;
         } else if (secs >= 1) {
-            document.getElementById('intro-countdown').innerText = 'Ready in 1 second...';
+            document.getElementById('intro-countdown').innerText = 'Listo en 1 segundo...';
         }
         if (elapsed >= 3000) {
             levelIntro = null;
