@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Territory Breakout PvP</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        #ui {
+            display: flex;
+            justify-content: space-between;
+            width: 600px;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        canvas {
+            border: 4px solid #333;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            background-color: #000;
+        }
+        #controls {
+            text-align: center;
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui">
+        <span style="color: #e0e0e0;">DAY (P1): <span id="day-score">50</span>%</span>
+        <span style="color: #1e3d59;">NIGHT (P2): <span id="night-score">50</span>%</span>
+    </div>
+    
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+    
+    <div id="controls">
+        <strong>P1 (Light):</strong> A / D to Move | <strong>P2 (Dark):</strong> Left / Right Arrows to Move
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const DAY_COLOR = '#e0e0e0';
+const NIGHT_COLOR = '#1e3d59';
+
+// Grid Setup
+const COLS = 30;
+const ROWS = 30;
+const TILE_SIZE = canvas.width / COLS;
+
+// 0 = Day (Light), 1 = Night (Dark)
+let grid = Array.from({ length: ROWS }, (_, r) => 
+    Array.from({ length: COLS }, () => (r < ROWS / 2 ? 0 : 1))
+);
+
+// Paddles
+const paddleWidth = 80;
+const paddleHeight = 12;
+
+const p1 = {
+    x: canvas.width / 2 - paddleWidth / 2,
+    y: 10,
+    width: paddleWidth,
+    height: paddleHeight,
+    dx: 0,
+    speed: 7,
+    color: '#ffffff'
+};
+
+const p2 = {
+    x: canvas.width / 2 - paddleWidth / 2,
+    y: canvas.height - 10 - paddleHeight,
+    width: paddleWidth,
+    height: paddleHeight,
+    dx: 0,
+    speed: 7,
+    color: '#0f2027'
+};
+
+// Balls
+// Ball 1 (Belongs to Day/Light): Destroys Night (1 -> 0)
+const ball1 = {
+    x: canvas.width / 2,
+    y: canvas.height / 2 - 20,
+    radius: 7,
+    dx: 3,
+    dy: -4,
+    color: '#ffffff',
+    targetTile: 1, // Target to convert
+    fillWith: 0    // Value to write
+};
+
+// Ball 2 (Belongs to Night/Dark): Destroys Day (0 -> 1)
+const ball2 = {
+    x: canvas.width / 2,
+    y: canvas.height / 2 + 20,
+    radius: 7,
+    dx: -3,
+    dy: 4,
+    color: '#0f2027',
+    targetTile: 0,
+    fillWith: 1
+};
+
+// Key Listeners
+const keys = {};
+window.addEventListener('keydown', (e) => keys[e.key] = true);
+window.addEventListener('keyup', (e) => keys[e.key] = false);
+
+function handleInput() {
+    // P1 Controls (A / D)
+    if (keys['a'] || keys['A']) p1.dx = -p1.speed;
+    else if (keys['d'] || keys['D']) p1.dx = p1.speed;
+    else p1.dx = 0;
+
+    // P2 Controls (Arrow Left / Arrow Right)
+    if (keys['ArrowLeft']) p2.dx = -p2.speed;
+    else if (keys['ArrowRight']) p2.dx = p2.speed;
+    else p2.dx = 0;
+
+    // Move Paddles with Constraints
+    p1.x = Math.max(0, Math.min(canvas.width - p1.width, p1.x + p1.dx));
+    p2.x = Math.max(0, Math.min(canvas.width - p2.width, p2.x + p2.dx));
+}
+
+function updateBall(b) {
+    b.x += b.dx;
+    b.y += b.dy;
+
+    // Wall Collisions (Left / Right)
+    if (b.x - b.radius < 0 || b.x + b.radius > canvas.width) {
+        b.dx *= -1;
+        b.x = Math.max(b.radius, Math.min(canvas.width - b.radius, b.x));
+    }
+
+    // Paddle Collisions
+    // Top Paddle (P1)
+    if (
+        b.y - b.radius <= p1.y + p1.height &&
+        b.x >= p1.x && b.x <= p1.x + p1.width &&
+        b.dy < 0
+    ) {
+        b.dy *= -1;
+        let hitPoint = (b.x - (p1.x + p1.width / 2)) / (p1.width / 2);
+        b.dx = hitPoint * 5;
+    }
+
+    // Bottom Paddle (P2)
+    if (
+        b.y + b.radius >= p2.y &&
+        b.x >= p2.x && b.x <= p2.x + p2.width &&
+        b.dy > 0
+    ) {
+        b.dy *= -1;
+        let hitPoint = (b.x - (p2.x + p2.width / 2)) / (p2.width / 2);
+        b.dx = hitPoint * 5;
+    }
+
+    // Top / Bottom Out of Bounds Reset
+    if (b.y - b.radius < 0) {
+        b.y = canvas.height / 2;
+        b.dy = Math.abs(b.dy);
+    }
+    if (b.y + b.radius > canvas.height) {
+        b.y = canvas.height / 2;
+        b.dy = -Math.abs(b.dy);
+    }
+
+    // Tile Collisions & Territory Flipping
+    let gridX = Math.floor(b.x / TILE_SIZE);
+    let gridY = Math.floor(b.y / TILE_SIZE);
+
+    if (gridY >= 0 && gridY < ROWS && gridX >= 0 && gridX < COLS) {
+        if (grid[gridY][gridX] === b.targetTile) {
+            grid[gridY][gridX] = b.fillWith;
+            b.dy *= -1; // Bounce back on impact
+        }
+    }
+}
+
+function drawGridAndScores() {
+    let dayCount = 0;
+    let totalTiles = COLS * ROWS;
+
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            ctx.fillStyle = grid[r][c] === 0 ? DAY_COLOR : NIGHT_COLOR;
+            ctx.fillRect(c * TILE_SIZE, r * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            if (grid[r][c] === 0) dayCount++;
+        }
+    }
+
+    // UI Updates
+    let dayPercentage = Math.round((dayCount / totalTiles) * 100);
+    document.getElementById('day-score').textContent = dayPercentage;
+    document.getElementById('night-score').textContent = 100 - dayPercentage;
+}
+
+function drawPaddle(p) {
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.width, p.height);
+    ctx.strokeStyle = '#888';
+    ctx.strokeRect(p.x, p.y, p.width, p.height);
+}
+
+function drawBall(b) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+    ctx.fillStyle = b.color;
+    ctx.fill();
+    ctx.strokeStyle = '#888';
+    ctx.stroke();
+    ctx.closePath();
+}
+
+function loop() {
+    handleInput();
+    updateBall(ball1);
+    updateBall(ball2);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGridAndScores();
+    drawPaddle(p1);
+    drawPaddle(p2);
+    drawBall(ball1);
+    drawBall(ball2);
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
