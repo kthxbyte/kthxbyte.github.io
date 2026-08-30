@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Landscape — WebGL voxel terrain</title>
+<style>
+  :root {
+    --panel-bg: rgba(16, 18, 22, 0.82);
+    --panel-fg: #d8dee6;
+    --panel-dim: #8b95a3;
+    --accent: #7fc4ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0d10; }
+  #view { display: block; width: 100vw; height: 100vh; cursor: crosshair;
+          touch-action: none; }
+
+  #panel {
+    position: fixed; top: 12px; left: 12px; width: 250px;
+    padding: 12px 14px 14px;
+    background: var(--panel-bg); color: var(--panel-fg);
+    border: 1px solid rgba(255,255,255,0.09); border-radius: 8px;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    backdrop-filter: blur(8px);
+    user-select: none;
+  }
+  #panel[hidden] { display: none; }
+  #panel h1 {
+    margin: 0 0 2px; font-size: 12px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  #panel .note { margin: 0 0 10px; color: var(--panel-dim); font-size: 11px; }
+  #panel label { display: block; margin-top: 9px; }
+  #panel .row { display: flex; justify-content: space-between; gap: 8px; }
+  #panel .row span:last-child { color: var(--panel-dim); }
+  #panel input[type=range] { width: 100%; margin: 2px 0 0; accent-color: var(--accent); }
+  #panel input[type=checkbox] { accent-color: var(--accent); margin: 0 6px 0 0; }
+  #panel .check { display: flex; align-items: center; margin-top: 9px; }
+  #panel hr { border: 0; border-top: 1px solid rgba(255,255,255,0.09); margin: 12px 0 0; }
+  #stats { margin-top: 10px; color: var(--panel-dim); font-size: 11px; }
+  #stats b { color: var(--panel-fg); font-weight: 500; }
+
+  #hint {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    padding: 8px 16px; border-radius: 20px;
+    background: var(--panel-bg); color: var(--panel-fg);
+    border: 1px solid rgba(255,255,255,0.09);
+    font: 12px ui-monospace, Menlo, Consolas, monospace;
+    pointer-events: none; transition: opacity .3s;
+  }
+  #hint[hidden] { display: none; }
+
+  /* --- touch controls ------------------------------------------- */
+  #touch { position: fixed; inset: 0; pointer-events: none; }
+  #touch button, #touch .stick { pointer-events: auto; touch-action: none; }
+
+  .stick {
+    position: absolute; bottom: 26px;
+    width: 132px; height: 132px; border-radius: 50%;
+    background: rgba(16,18,22,0.42);
+    border: 1px solid rgba(255,255,255,0.16);
+    backdrop-filter: blur(6px);
+    transition: border-color .15s, background .15s;
+  }
+  .stick.active { border-color: rgba(127,196,255,0.7); background: rgba(16,18,22,0.55); }
+  #stick-move { left: 26px; }
+  .stick-thumb {
+    position: absolute; left: 50%; top: 50%;
+    width: 58px; height: 58px; border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(127,196,255,0.45);
+    border: 1px solid rgba(255,255,255,0.45);
+  }
+  .stick-label {
+    position: absolute; left: 0; right: 0; bottom: -18px; text-align: center;
+    font: 10px/1 ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: .14em; color: rgba(216,222,230,0.45);
+  }
+
+  #touch-buttons {
+    position: absolute; top: 12px; right: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #touch-lift {
+    position: absolute; right: 26px; bottom: 30px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  #touch button {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: rgba(16,18,22,0.55); color: var(--panel-fg);
+    border: 1px solid rgba(255,255,255,0.18);
+    font-size: 19px; line-height: 1; padding: 0;
+    backdrop-filter: blur(6px);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #touch button:active { background: rgba(127,196,255,0.35); }
+  #touch button.on { background: rgba(127,196,255,0.45); border-color: var(--accent); }
+  #touch button:disabled { opacity: .35; }
+
+  /* On a phone the panel would otherwise cover most of the view. */
+  @media (max-width: 560px) {
+    #panel { width: calc(100vw - 24px); max-height: 56vh; overflow-y: auto; }
+  }
+  /* Landscape phones are short; shrink the sticks so they still fit. */
+  @media (max-height: 480px) {
+    .stick { width: 108px; height: 108px; bottom: 18px; }
+    .stick-thumb { width: 48px; height: 48px; }
+    #touch-lift { bottom: 22px; }
+  }
+
+  #error {
+    position: fixed; inset: 0; display: none; place-items: center;
+    background: #0b0d10; color: #d8dee6; padding: 32px;
+    font: 14px/1.6 ui-monospace, Menlo, Consolas, monospace;
+  }
+  #error.shown { display: grid; }
+  #error div { max-width: 60ch; }
+  #error h2 { color: #ff8b6b; font-size: 15px; margin: 0 0 12px; }
+  #error pre {
+    white-space: pre-wrap; color: var(--panel-dim);
+    background: rgba(255,255,255,0.04); padding: 12px; border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="panel">
+  <h1>Landscape</h1>
+  <p class="note">Click to look · WASD · Shift · H hides</p>
+
+  <div class="check">
+    <input type="checkbox" id="retro"><label for="retro">Retro (2010 look)</label>
+  </div>
+  <div class="check">
+    <input type="checkbox" id="terrainFollow" checked>
+    <label for="terrainFollow">Terrain follow</label>
+  </div>
+
+  <label>
+    <span class="row"><span>Render scale</span><span id="renderScale-v"></span></span>
+    <input type="range" id="renderScale" min="0.25" max="1" step="0.05">
+  </label>
+  <label>
+    <span class="row"><span>Draw distance</span><span id="drawDistance-v"></span></span>
+    <input type="range" id="drawDistance" min="200" max="3000" step="50">
+  </label>
+  <label>
+    <span class="row"><span>Fog density</span><span id="fogDensity-v"></span></span>
+    <input type="range" id="fogDensity" min="0" max="0.005" step="0.0001">
+  </label>
+  <label>
+    <span class="row"><span>Sun azimuth</span><span id="sunAzimuth-v"></span></span>
+    <input type="range" id="sunAzimuth" min="0" max="360" step="1">
+  </label>
+  <label>
+    <span class="row"><span>Sun elevation</span><span id="sunElevation-v"></span></span>
+    <input type="range" id="sunElevation" min="2" max="88" step="1">
+  </label>
+  <label>
+    <span class="row"><span>Field of view</span><span id="fov-v"></span></span>
+    <input type="range" id="fov" min="30" max="120" step="1">
+  </label>
+
+  <hr>
+  <div id="stats"></div>
+</div>
+
+<div id="hint" hidden></div>
+
+<div id="error"><div>
+  <h2 id="error-title"></h2>
+  <pre id="error-body"></pre>
+</div></div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
