@@ -145,6 +145,8 @@ async function main() {
         });
     }
 
+    notify = say;
+
     let last = performance.now();
     let fps = 0, frames = 0, fpsClock = last;
 
@@ -175,9 +177,34 @@ async function main() {
     requestAnimationFrame(() => requestAnimationFrame(() => {
         document.body.dataset.ready = '1';
     }));
+
+    // From here on the demo is running, and errors stop being fatal.
+    booted = true;
 }
 
-// Anything that escapes the specific handlers above still has to reach
-// the user rather than dying silently in the console.
-addEventListener('error', (e) => fail('Unexpected error', e.message));
+// Error severity depends entirely on whether the demo is running yet.
+//
+// Before boot completes, nothing works, so a full-screen message is the
+// right response. Once the renderer is live, a stray exception -- an
+// input handler, a sensor callback -- must NOT destroy a working demo.
+// It previously did: one throw from setPointerCapture replaced the
+// whole page with an error screen.
+let booted = false;
+let notify = null;
+
+function nonFatal(what, err) {
+    console.error(`${what}:`, err);
+    if (notify) notify('Recovered from an internal error — see console', 4000);
+}
+
+addEventListener('error', (e) => {
+    if (booted) nonFatal('Non-fatal error', e.error || e.message);
+    else fail('Unexpected error', e.message);
+});
+addEventListener('unhandledrejection', (e) => {
+    if (booted) nonFatal('Non-fatal rejection', e.reason);
+    else fail('Unexpected error', String(e.reason));
+    e.preventDefault();
+});
+
 main().catch((err) => fail('Unexpected error', err.stack || String(err)));

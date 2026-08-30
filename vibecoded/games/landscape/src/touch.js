@@ -25,6 +25,34 @@ function curve(v) {
     return { x: v.x / m * scaled, y: v.y / m * scaled };
 }
 
+// Pointer capture is an enhancement, never a requirement, and it can
+// fail for reasons this code does not control:
+//
+//   NotFoundError     - the pointer is already gone by the time the
+//                       handler runs.
+//   InvalidStateError - the element is not connected to the document,
+//                       which is reachable during page teardown with a
+//                       finger still down.
+//
+// Neither is a reason to interrupt anything. Before this was guarded, a
+// throw here escaped into window.onerror and replaced the entire running
+// demo with a full-screen error page.
+function capture(el, pointerId) {
+    try {
+        el.setPointerCapture(pointerId);
+    } catch (err) {
+        // Tracking still works: move and up are bound on window.
+    }
+}
+
+function releaseCapture(el, pointerId) {
+    try {
+        el.releasePointerCapture(pointerId);
+    } catch (err) {
+        // Already released, or never captured. Nothing to undo.
+    }
+}
+
 class Stick {
     constructor(id, label) {
         this.el = document.createElement('div');
@@ -39,17 +67,23 @@ class Stick {
         this.el.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             this.pointer = e.pointerId;
-            this.el.setPointerCapture(e.pointerId);
             this.el.classList.add('active');
+            capture(this.el, e.pointerId);
             this.move(e);
         });
-        this.el.addEventListener('pointermove', (e) => {
+
+        // Bound on window rather than on the element. Pointer capture
+        // would normally keep events retargeted here once the finger
+        // slides off the stick, but capture is allowed to fail (see
+        // capture() below), and a stick that stops receiving pointermove
+        // freezes at its last value and never releases. Listening on
+        // window makes tracking correct with or without it.
+        addEventListener('pointermove', (e) => {
             if (e.pointerId === this.pointer) this.move(e);
         });
         for (const ev of ['pointerup', 'pointercancel']) {
-            this.el.addEventListener(ev, (e) => {
-                if (e.pointerId !== this.pointer) return;
-                this.release();
+            addEventListener(ev, (e) => {
+                if (e.pointerId === this.pointer) this.release();
             });
         }
     }
@@ -66,6 +100,7 @@ class Stick {
     }
 
     release() {
+        if (this.pointer !== null) releaseCapture(this.el, this.pointer);
         this.pointer = null;
         this.vec = { x: 0, y: 0 };
         this.el.classList.remove('active');
