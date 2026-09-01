@@ -87,6 +87,65 @@ export function loadImage(url) {
     });
 }
 
+// Decode an image to a Float32Array of terrain heights in *texel units*
+// (one unit horizontally = one texel), which is the space the whole
+// engine works in.
+//
+//   'grey'      - the 2010 heightmap: the pixel value IS the height.
+//   'terrarium' - real-world tiles: (R*256 + G + B/256) - 32768 gives
+//                 metres, divided by metresPerTexel to reach texel units.
+//
+// Terrarium is decoded here rather than in the shader for a specific
+// reason: the packed channels cannot be linearly interpolated. Filtering
+// R, G and B independently produces a garbage spike wherever R steps
+// across a 256 m boundary and G wraps 255 -> 0. Decoding first, then
+// uploading a single-channel float texture, makes filtering correct.
+export function decodeHeights(image, encoding, metresPerTexel) {
+    const w = image.naturalWidth || image.width;
+    const h = image.naturalHeight || image.height;
+    // A live mosaic arrives already on a canvas. Copying it into another
+    // one to read it back would double the peak memory for nothing --
+    // 67 MB a side at 4096 -- so read from it where it stands.
+    let ctx;
+    if (typeof image.getContext === 'function') {
+        ctx = image.getContext('2d', { willReadFrequently: true });
+    } else {
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(image, 0, 0);
+    }
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const out = new Float32Array(w * h);
+    if (encoding === 'terrarium') {
+        const inv = 1 / metresPerTexel;
+        for (let i = 0; i < out.length; i++) {
+            const j = i * 4;
+            out[i] = ((px[j] * 256 + px[j + 1] + px[j + 2] / 256) - 32768) * inv;
+        }
+    } else {
+        for (let i = 0; i < out.length; i++) out[i] = px[i * 4];
+    }
+    return out;
+}
+
+// Single-channel float texture of heights. R16F is filterable in WebGL2
+// without an extension (R32F is not), and its precision at these
+// magnitudes is well under a metre.
+export function createHeightTexture(gl, heights, size, { wrap, unit }) {
+    const tex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, size, size, 0,
+                  gl.RED, gl.FLOAT, heights);
+    const mode = wrap ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, mode);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, mode);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    return tex;
+}
+
 // Read an image back as raw bytes, for the CPU-side heightmap.
 export function imageToBytes(image) {
     const canvas = document.createElement('canvas');

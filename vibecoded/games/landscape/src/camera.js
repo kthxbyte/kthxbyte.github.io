@@ -5,7 +5,6 @@
 // forward made you faster indefinitely. This uses damped velocity
 // instead: release the key and you coast to a stop.
 
-const WORLD = 1792;
 const PITCH_LIMIT = Math.PI / 2 - 0.01;
 const ACCEL = 900;          // world units / s^2
 const BOOST = 4;
@@ -18,29 +17,94 @@ export class Camera {
     // module needs no knowledge of how the heightmap was loaded.
     constructor(groundAt) {
         this.groundAt = groundAt;
+        this.vel = [0, 0, 0];
         // The original's opening view: (200, 200), 50 units above the
         // ground beneath that point, looking along +X.
-        this.x = 200;
-        this.y = 200;
-        this.clearance = 50;
-        this.z = groundAt(200, 200) + this.clearance;
-        this.yaw = 0;
-        this.pitch = 0;
+        this.place(200, 200, 50, 0, 0);
+    }
+
+    // Drop the camera somewhere, at a clearance above the ground.
+    place(x, y, clearance, yaw, pitch) {
+        this.x = x;
+        this.y = y;
+        this.clearance = clearance;
+        this.z = this.groundAt(x, y) + clearance;
+        this.yaw = yaw;
+        this.pitch = pitch;
         this.vel = [0, 0, 0];
     }
 
     // Unit basis. +Z is up; yaw 0 looks along +X.
+    //
+    // Handedness matters here, and getting it wrong is invisible until
+    // the terrain is real. Web Mercator tile rows run north to south, so
+    // world +Y is SOUTH. Screen-right is the direction at yaw + 90
+    // degrees, which at yaw 0 -- facing east -- is +Y, i.e. south. That
+    // is what your right hand does facing east.
+    //
+    // The earlier `right = [sy, -cy, 0]` pointed north instead, which
+    // mirrored the image north-for-south. It was undetectable in play
+    // because the view and the turn direction mirror together, so the
+    // controls stay self-consistent; it only shows against a map.
     basis() {
         const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
         const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
         const fwd = [cp * cy, cp * sy, sp];
-        const right = [sy, -cy, 0];
+        const right = [-sy, cy, 0];
+        // fwd x right, not right x fwd: with +Y south the world triple is
+        // physically left-handed, and this ordering is what puts screen-up
+        // back on +Z.
         const up = [
-            right[1] * fwd[2] - right[2] * fwd[1],
-            right[2] * fwd[0] - right[0] * fwd[2],
-            right[0] * fwd[1] - right[1] * fwd[0],
+            fwd[1] * right[2] - fwd[2] * right[1],
+            fwd[2] * right[0] - fwd[0] * right[2],
+            fwd[0] * right[1] - fwd[1] * right[0],
         ];
         return { fwd, right, up };
+    }
+
+    // The basis actually rendered from: the true pose with wind offsets
+    // laid on top. Movement, terrain-follow and the imagery LOD all use
+    // basis() instead, so drift never feeds back into them -- it sways
+    // the view without blowing you off course, and without jiggling the
+    // viewing distance the detail rectangle is chosen from.
+    //
+    // `sway` and `heave` arrive already in world units; this class has
+    // no idea what a metre is.
+    viewBasis(wind) {
+        if (!wind) {
+            return { ...this.basis(), eye: [this.x, this.y, this.z] };
+        }
+        const pitch = Math.max(-PITCH_LIMIT,
+                      Math.min(PITCH_LIMIT, this.pitch + wind.pitch));
+        const cp = Math.cos(pitch), sp = Math.sin(pitch);
+        const cy = Math.cos(this.yaw + wind.yaw), sy = Math.sin(this.yaw + wind.yaw);
+        const fwd = [cp * cy, cp * sy, sp];
+        const right0 = [-sy, cy, 0];
+        // Same ordering as basis(): fwd x right, not right x fwd. With
+        // +Y south the world triple is physically left-handed.
+        const up0 = [
+            fwd[1] * right0[2] - fwd[2] * right0[1],
+            fwd[2] * right0[0] - fwd[0] * right0[2],
+            fwd[0] * right0[1] - fwd[1] * right0[0],
+        ];
+        // Roll: rotate right and up about fwd. The horizon tilt is the
+        // cue that reads as a drone rather than as a wobble, and the
+        // basis had no roll term before this.
+        const cr = Math.cos(wind.roll), sr = Math.sin(wind.roll);
+        const right = [0, 1, 2].map((i) => right0[i] * cr + up0[i] * sr);
+        const up = [0, 1, 2].map((i) => up0[i] * cr - right0[i] * sr);
+
+        // Sway is lateral, heave vertical, and the eye is kept above the
+        // ground: a downward gust must not push the camera through a hill
+        // that the true position is safely above.
+        const eye = [
+            this.x + right0[0] * wind.sway,
+            this.y + right0[1] * wind.sway,
+            this.z + wind.heave,
+        ];
+        const floor = this.groundAt(eye[0], eye[1]) + 1;
+        if (eye[2] < floor) eye[2] = floor;
+        return { fwd, right, up, eye };
     }
 
     update(dt, intent, settings) {
@@ -89,10 +153,14 @@ export class Camera {
             this.clearance = this.z - this.groundAt(this.x, this.y);
         }
 
-        // Keep coordinates in the first tile so floats stay precise no
-        // matter how far you fly. The world repeats every 1792 units,
-        // so this is invisible.
-        this.x = ((this.x % WORLD) + WORLD) % WORLD;
-        this.y = ((this.y % WORLD) + WORLD) % WORLD;
+        // The synthetic map tiles, so coordinates are folded back into
+        // the first tile to keep floats precise however far you fly --
+        // invisible, because the world repeats. Real terrain is a finite
+        // window with open sea around it, and must not wrap.
+        if (settings.wrapWorld) {
+            const w = settings.worldSize;
+            this.x = ((this.x % w) + w) % w;
+            this.y = ((this.y % w) + w) % w;
+        }
     }
 }

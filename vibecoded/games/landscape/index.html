@@ -38,7 +38,20 @@
   #panel input[type=checkbox] { accent-color: var(--accent); margin: 0 6px 0 0; }
   #panel .check { display: flex; align-items: center; margin-top: 9px; }
   #panel hr { border: 0; border-top: 1px solid rgba(255,255,255,0.09); margin: 12px 0 0; }
+  #panel select {
+    width: 100%; margin-top: 3px; padding: 3px 4px;
+    background: rgba(0,0,0,0.35); color: var(--panel-fg);
+    border: 1px solid rgba(255,255,255,0.14); border-radius: 4px;
+    font: inherit;
+  }
+  #panel label.sel { margin-top: 4px; }
   #stats { margin-top: 10px; color: var(--panel-dim); font-size: 11px; }
+  #attrib {
+    margin-top: 9px; padding-top: 8px; font-size: 10px; line-height: 1.35;
+    color: rgba(139,149,163,0.75);
+    border-top: 1px solid rgba(255,255,255,0.07);
+  }
+  #attrib:empty { display: none; }
   #stats b { color: var(--panel-fg); font-weight: 500; }
 
   #hint {
@@ -130,28 +143,65 @@
   <h1>Landscape</h1>
   <p class="note">Click to look · WASD · Shift · H hides</p>
 
+  <label class="sel">
+    <span class="row"><span>Terrain</span></span>
+    <select id="terrain">
+      <option value="caldera">Caldera, Atacama</option>
+      <option value="original">Original 2010 map</option>
+    </select>
+  </label>
+
   <div class="check">
     <input type="checkbox" id="retro"><label for="retro">Retro (2010 look)</label>
   </div>
   <div class="check">
+    <input type="checkbox" id="imagery" checked>
+    <label for="imagery">Satellite imagery</label>
+  </div>
+  <div class="check">
     <input type="checkbox" id="terrainFollow" checked>
     <label for="terrainFollow">Terrain follow</label>
+  </div>
+  <label id="place-row">
+    <span class="row"><span>Fly to (lat, lon)</span><span id="place-note"></span></span>
+    <span style="display:flex; gap:4px; margin-top:2px">
+      <input type="text" id="place" placeholder="-27.07, -70.82" autocomplete="off"
+             style="flex:1; min-width:0; background:#0006; color:inherit;
+                    border:1px solid #fff3; border-radius:3px; padding:2px 4px;
+                    font:inherit">
+      <button id="place-go" style="background:#fff2; color:inherit;
+              border:1px solid #fff3; border-radius:3px; padding:2px 8px;
+              font:inherit; cursor:pointer">Go</button>
+    </span>
+  </label>
+
+  <div class="check">
+    <input type="checkbox" id="debugGrid">
+    <label for="debugGrid">Tile grid + 1 km rings</label>
   </div>
 
   <label>
     <span class="row"><span>Render scale</span><span id="renderScale-v"></span></span>
     <input type="range" id="renderScale" min="0.25" max="1" step="0.05">
   </label>
+  <label id="vertScale-row">
+    <span class="row"><span>Vertical scale</span><span id="vertScale-v"></span></span>
+    <input type="range" id="vertScale" min="1" max="8" step="0.1">
+  </label>
   <label>
     <span class="row"><span>Draw distance</span><span id="drawDistance-v"></span></span>
     <input type="range" id="drawDistance" min="200" max="3000" step="50">
+  </label>
+  <label id="detailDistance-row">
+    <span class="row"><span>Detail switch</span><span id="detailDistance-v"></span></span>
+    <input type="range" id="detailDistance" min="0.4" max="8" step="0.1">
   </label>
   <label>
     <span class="row"><span>Fog density</span><span id="fogDensity-v"></span></span>
     <input type="range" id="fogDensity" min="0" max="0.005" step="0.0001">
   </label>
   <label>
-    <span class="row"><span>Sun azimuth</span><span id="sunAzimuth-v"></span></span>
+    <span class="row"><span>Sun bearing</span><span id="sunAzimuth-v"></span></span>
     <input type="range" id="sunAzimuth" min="0" max="360" step="1">
   </label>
   <label>
@@ -162,9 +212,14 @@
     <span class="row"><span>Field of view</span><span id="fov-v"></span></span>
     <input type="range" id="fov" min="30" max="120" step="1">
   </label>
+  <label>
+    <span class="row"><span>Wind</span><span id="wind-v"></span></span>
+    <input type="range" id="wind" min="0" max="1" step="0.01">
+  </label>
 
   <hr>
   <div id="stats"></div>
+  <div id="attrib"></div>
 </div>
 
 <div id="hint" hidden></div>

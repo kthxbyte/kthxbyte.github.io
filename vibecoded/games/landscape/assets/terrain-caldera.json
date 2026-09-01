@@ -1,0 +1,31 @@
+{
+  "place": "Caldera, Atacama, Chile",
+  "centre": [
+    -27.0678,
+    -70.8231
+  ],
+  "zoom": 13,
+  "size": 4096,
+  "tiles": 16,
+  "tileOrigin": [
+    2476,
+    4728
+  ],
+  "metresPerPixel": 17.0162,
+  "bounds": {
+    "north": -26.74561,
+    "west": -71.191406,
+    "south": -27.371767,
+    "east": -70.488281
+  },
+  "elevation": {
+    "min": -9.0,
+    "max": 1783.0
+  },
+  "encoding": "terrarium: (R*256 + G + B/256) - 32768 = metres",
+  "source": "Tilezen terrain tiles, AWS Open Data (elevation-tiles-prod)",
+  "attribution": [
+    "United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey",
+    "Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration"
+  ]
+}
