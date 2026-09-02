@@ -166,47 +166,6 @@ which is not the same as where it stops being *worth fetching*, so the
 slider defaults to 2.2 km, well past it. **Locked, this slider does
 nothing** -- the readout replaces it with the lock's own reach.
 
-**Window** chooses how many tiles a terrain window is cut from, from
-2x2 to 12x12. It is the one control with no right answer, because the
-tile budget buys either reach or resolution and never both. At the
-default latitude, z12:
-
-| | 12x12 | 4x4 |
-|---|---|---|
-| world | 98 km wide | 33 km wide |
-| horizon | 38 km | 13 km |
-| height texture | 18 MB | 2 MB |
-| tiles at load | 144 + 144 | 16 + 64 |
-
-plus 200 tiles of detail rings either way, since those follow the camera
-rather than the window. Smaller windows are refetched more often but
-move far less data per kilometre flown.
-
-Two things about that list are not monotonic, and are labelled in it:
-
-* **8x8 gives a sharper picture than 10x10.** The satellite base mosaic
-  gets a free zoom step while `tiles * 512` still fits in a 4096 px
-  texture, so 8 tiles and below get a 16 m/px base while 10 and 12 fall
-  back to the terrain's own zoom at 32 m/px.
-* **2x2 is a curiosity, not a setting.** It loads in 20 tiles, but the
-  horizon is 6.4 km and the whole world is 16 km across -- less than the
-  outer detail ring wants to cover.
-
-Changing it refetches through the same path a window move uses, so you
-keep your position and your velocity; it does not fly you back to the
-start, and it does not change the zoom -- which matters more than it
-sounds, because zoom sets the vertical exaggeration (see below), so a
-window that quietly re-zoomed would quietly change how tall the
-mountains are. **Draw distance follows it** at 100 texels of view per tile
-(1200 at 12x12, exactly what it has always been), because draw distance
-is measured in texels: it survives a zoom change untouched, which is the
-point of it, and for the same reason cannot survive a resize untouched.
-Looking further than the window holds is not a rendering error -- outside
-it the ground reads as sea level, by design -- but it does surround the
-terrain with an ocean that is not there. Move the slider afterwards and
-your value stands until the window changes size again, or pin it with
-`?dist=`.
-
 **Lock zoom** holds both ladders still, and is on by default. The
 terrain window stays at its chosen zoom however fast you fly, and
 imagery detail stays at z17 however far you look. Nothing about the
@@ -242,6 +201,39 @@ a 98 km window manages up to about 1.6 km/s. The top speed is Mach 10,
 refetched every 15 s: twice the intended rate, comfortably servable, and
 the reason the speed ceiling and the locked zoom belong together. Below
 about Mach 5 it costs nothing at all. `?lock=0` restores the ladders.
+
+### Window size, at `?tiles=`
+
+How many tiles a terrain window is cut from, 2 to 12 per side. Not a
+panel control -- it is a thing you set once and leave, not a thing you
+fly with -- but it is the setting with the largest effect on what the
+demo costs. At the default latitude, z12:
+
+| | 12x12 (default) | 4x4 |
+|---|---|---|
+| world | 98 km wide | 33 km wide |
+| horizon | 38 km | 13 km |
+| height texture | 18 MB | 2 MB |
+| tiles at load | 144 + 144 | 16 + 64 |
+
+plus 200 tiles of detail rings either way, since those follow the camera
+rather than the window. Smaller windows are refetched more often but
+move far less data per kilometre flown.
+
+Two things about that are not monotonic. **8x8 gives a sharper picture
+than 10x10**, because the satellite base gets its free zoom step while
+`tiles * 512` still fits in a 4096 px texture -- 8 tiles and below get a
+16 m/px base, 10 and 12 fall back to 32 m/px. And **8x8 uses more memory
+than 12x12** for the same reason: a sharper base is a bigger one.
+
+**Draw distance follows the window** at 100 texels of view per tile,
+1200 at 12x12, which is exactly what it has always been. Draw distance
+is measured in texels: that is what lets it survive a zoom change
+untouched, and for the same reason it cannot survive a change of window
+size untouched. Looking further than the window holds is not a rendering
+error -- outside it the ground reads as sea level, by design -- but it
+does surround the terrain with an ocean that is not there. Move the
+slider afterwards and your value stands; pin it with `?dist=`.
 
 **Tile grid + 1 km rings** is a debug overlay: alternate imagery tiles
 are tinted, so tile size against distance is visible and the detail

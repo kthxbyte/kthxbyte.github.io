@@ -195,7 +195,7 @@ As built:
 | file | change |
 |---|---|
 | `camera.js` | speeds in m/s via `metresPerTexel`; smoothed speed exposed; two-phase ramp to a Mach 10 ceiling |
-| `ui.js` | `Speed`, `Window` and `Lock zoom` controls; defaults |
+| `ui.js` | `Speed` and `Lock zoom` controls; defaults. Window size is a setting, not a control -- `?tiles=` |
 | `terrain-window.js` | new, and **pure** — zoom, coverage, rebase, placement predicates, no GL, no DOM, no fetch, so the coordinate maths can be tested in node |
 | `terrain-tiles.js` | new — terrarium tiles into a height mosaic, with a retry |
 | `imagery.js` | `speedF` cap; a locked level; base carry-over across moves |
@@ -220,8 +220,9 @@ shader is all imagery and debug work, none of it about the heightfield.
 - **Vertical invariance**: assert rendered height is the same at every
   zoom, and that a zoom change does not move the camera vertically.
   *Done*, and added only after the bug in §3 shipped.
-- **Window sizes**: assert every selectable tile count holds its zoom at
-  rest and that a resize does not ratchet the zoom downward. *Done.*
+- **Window sizes**: assert every tile count `?tiles=` accepts holds its
+  zoom at rest, and that a resize does not ratchet the zoom downward.
+  *Done.*
 - **Seamlessness**: capture a frame either side of a same-zoom swap and
   assert the images are *pixel-identical*. This is the strongest test
   available and it should pass exactly, not approximately. **Not done**

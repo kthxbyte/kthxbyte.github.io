@@ -161,6 +161,14 @@ function makeTerrain(gl, spec) {
     // A window reaching the coast gets a real sea; an inland one does
     // not, or the flat plane outside the data is painted as ocean at
     // whatever altitude the valley floor happens to be.
+    //
+    // This is the only thing the minimum still decides, and it is the
+    // safe thing for it to decide: a boolean, and one that answers a
+    // question the minimum genuinely knows the answer to. The plane's
+    // *height* used to come from it too, and that was unstable -- see
+    // renderer.js, where the plane is now pinned at zero. `minTexels` is
+    // an outlier by definition; asking it for a colour decision is fine,
+    // asking it for a geometric one was not.
     const hasSea = mpp ? minTexels * mpp < 5 : true;
     // Relief in texels vanishes as the window zooms out: a texel is
     // 17 m at z13 but 2.4 km at z6, so Everest is 3 texels tall in a
@@ -363,6 +371,12 @@ async function main() {
         // fetch-and-rebase path as any other move. rebase() works off the
         // global slippy grid, so it does not care that the window changed
         // shape as well as position.
+        //
+        // Currently unreachable: `liveTiles` was a panel control and is
+        // now read only from `?tiles=`, which boot honours directly, so
+        // nothing changes it mid-flight. Kept because it is the tested
+        // path -- the vertical-scale bug lived here -- and because it is
+        // what a re-exposed control would use.
         const sizeMove = tiles !== t.meta.tiles;
         // The draw distance that will be in force AFTER this move, not the
         // one in force now. On a resize the two differ: the setting still
@@ -519,7 +533,6 @@ async function main() {
                 if (m) ui.sync();
             }
         }
-        if (key === 'liveTiles') moveWindow();
         // Both ladders move at once, so both need waking: the rings
         // re-target on the next frame, and the window is re-examined
         // in case unlocking has left it at a level speed no longer wants.

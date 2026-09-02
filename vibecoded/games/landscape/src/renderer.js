@@ -113,11 +113,26 @@ export class Renderer {
         gl.uniform1f(this.u.uVertScale, vertScale);
         gl.uniform1i(this.u.uWrap, t.wrap ? 1 : 0);
         gl.uniform1i(this.u.uProcedural, t.procedural ? 1 : 0);
-        // Where the window has coast, the plane is real sea level. Where
-        // it does not, it sits at the lowest ground in the window, so the
-        // world does not fall away to a 2 km cliff at its edge.
-        gl.uniform1f(this.u.uSeaTexels,
-                     t.hasSea ? 0.0 : (t.minTexels || 0) * vertScale);
+        // The plane outside the window is absolute sea level, always.
+        //
+        // It used to be fitted to the window when the window had no coast
+        // -- `minTexels * vertScale`, the lowest ground in it -- so the
+        // world would not fall away at its edge. That coupled a rendered
+        // height to an outlier statistic, the single lowest sample in
+        // 9.4 million, recomputed for every window. Flying inland from
+        // Vina it went 0, 3, 12, 29, 42, 88, 61 texels across successive
+        // windows against a camera sitting at 33: a floor that climbed
+        // towards the eye, swallowing the lower few hundred metres of the
+        // landscape, then crossed it and vanished entirely, then came
+        // back. Two windows sharing half their tiles differed by 46
+        // texels. Unstable by construction.
+        //
+        // Zero costs almost nothing it was buying. The window edge is
+        // 1536 texels away, so an inland window whose floor is 468 m up
+        // shows a step of 0.55 degrees at the horizon; the blue-ocean-at-
+        // 2000 m problem it is often confused with is handled separately,
+        // by uHasSea gating shadeSea.
+        gl.uniform1f(this.u.uSeaTexels, 0.0);
         gl.uniform1i(this.u.uHasSea, t.hasSea ? 1 : 0);
         gl.uniform1f(this.u.uMetresPerTexel, t.metresPerTexel || 1.0);
 

@@ -53,9 +53,9 @@ uniform float uWorldSize;     // texels per side of the height texture
 uniform float uVertScale;     // vertical exaggeration
 uniform bool  uWrap;          // synthetic terrain tiles; real terrain does not
 uniform bool  uProcedural;    // colour from elevation instead of a texture
-uniform float uSeaTexels;     // the flat plane outside the window: real
-                              // sea level where the window has coast,
-                              // otherwise the window's own lowest ground
+uniform float uSeaTexels;     // the flat plane outside the window, always
+                              // absolute sea level. Fitting it to the
+                              // window made it jump on every swap.
 uniform bool  uHasSea;        // whether that plane is water
 
 uniform bool  uDebugGrid;     // tile checkerboard + range rings

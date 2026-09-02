@@ -1459,6 +1459,43 @@ Sea shading is a separate function: flat normal, a tight specular glint
 so it reads as water rather than blue paint, and a grazing-angle sky
 reflection that strengthens toward the horizon.
 
+**The plane's height is absolute, and briefly was not.** Once windows
+were fetched at runtime it seemed obvious to fit the plane to the window
+-- real sea level where the window has coast, otherwise `minTexels`, the
+lowest ground in it, so the world would not fall away at its edge. That
+coupled a rendered height to an *outlier statistic*: the single lowest
+sample in 9.4 million, recomputed for every window.
+
+Measured, flying east from Viña one window at a time, against a camera
+sitting at 33 texels:
+
+| km inland | window min | plane |
+|---|---|---|
+| 0 | -2533 m | 0 texels |
+| 74 | +49 m | 3.1 |
+| 123 | +468 m | 29.2 |
+| 148 | +674 m | 42.1 |
+| 172 | +1412 m | 88.1 |
+| 197 | +980 m | 61.1 |
+
+So the floor climbs toward the eye, swallowing the lower few hundred
+metres of the landscape; crosses it, at which point `uCamPos.z >
+uSeaTexels` stops intersecting the plane at all and the distance becomes
+sky; then comes back down and returns. Two windows sharing half their
+tiles differed by 46 texels. It reads as the vertical scale glitching on
+every window switch, and only shows up in free flight, because that is
+when enough windows are crossed for the minimum to move.
+
+Pinned at zero. What that gives up is small and calculable: the window
+edge is 1536 texels away, so an inland window whose floor is 468 m up
+shows a step of **0.55 degrees** at the horizon. The other thing the
+fitted plane was protecting against -- blue ocean at 2000 m -- was never
+its job; `uHasSea` gates `shadeSea` separately, and still does.
+
+The general shape is worth keeping: `minTexels` answers a question about
+extremes, so it can safely decide a *boolean* (is there coast here?) and
+not a *geometry*. An outlier is a bad thing to put in a uniform.
+
 ### 19.6 Colour without a texture
 
 Real elevation arrives with no colour map, so `uProcedural` switches

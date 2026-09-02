@@ -20,7 +20,10 @@ export const DEFAULTS = {
     maxSteps: 256,
     debugGrid: false,
     roam: true,        // let the terrain window follow the camera
-    liveTiles: 12,     // tiles per side when fetching terrain at runtime
+    // Tiles per side when fetching terrain at runtime. No longer a panel
+    // control: the trade it makes is real but it is a thing you set once
+    // and leave, not a thing you fly with, so it lives at `?tiles=`.
+    liveTiles: 12,
     // z12 by default. z13 is where SRTM stops adding real relief, but a
     // level coarser doubles the ground a window covers for the same 144
     // tiles, which buys continuity and load time against detail that is
@@ -95,17 +98,6 @@ export class UI {
             settings.terrain = sel.value;
             onChange('terrain');
         });
-
-        // How many tiles a terrain window is cut from. Exposed because the
-        // trade it makes -- reach against resolution, memory and load time
-        // against how often the world is refetched -- cannot be reasoned
-        // about in the abstract, only flown.
-        const tiles = document.getElementById('liveTiles');
-        tiles.value = settings.liveTiles;
-        tiles.addEventListener('change', () => {
-            settings.liveTiles = parseInt(tiles.value, 10);
-            onChange('liveTiles');
-        });
     }
 
     // The window's own draw distance. Draw distance is measured in
@@ -136,34 +128,10 @@ export class UI {
     // Vertical exaggeration only means anything for real elevation data;
     // the 2010 map's heights are already authored at the scale it wants.
     showDataset(terrain) {
-        this.showWindowSizes(terrain);
-        document.getElementById('liveTiles-row').hidden = !terrain.procedural;
         document.getElementById('vertScale-row').hidden = !terrain.procedural;
         document.getElementById('detailDistance-row').hidden = !terrain.procedural;
         document.getElementById('debugGrid').parentElement.hidden = !terrain.procedural;
         document.getElementById('imagery').parentElement.hidden = !terrain.procedural;
-    }
-
-    // The extent an option buys depends on the zoom and the latitude, so
-    // the labels are rewritten against the window actually loaded rather
-    // than left as numbers that are only true over Caldera. The imagery
-    // note is not monotonic and has to be said out loud: the base mosaic
-    // gets a free zoom step while tiles*512 fits in 4096, so eight tiles
-    // gives a sharper picture than ten.
-    showWindowSizes(terrain) {
-        const mpp = terrain.procedural ? terrain.metresPerTexel : 0;
-        for (const opt of document.getElementById('liveTiles').options) {
-            const n = parseInt(opt.value, 10);
-            const km = n * 256 * mpp / 1000;
-            const base = n * 512 <= 4096 ? '' : ', coarser base';
-            opt.textContent = mpp
-                ? `${n}\u00d7${n} \u2014 ${km.toFixed(0)} km${base}`
-                : `${n}\u00d7${n} tiles`;
-        }
-        const note = document.getElementById('liveTiles-note');
-        note.textContent = mpp && terrain.meta
-            ? `${terrain.meta.tiles}\u00d7${terrain.meta.tiles}`
-            : '';
     }
 
     // Attribution is a legal requirement for both data sources, so it is
@@ -189,7 +157,6 @@ export class UI {
                            'lockZoom']) {
             document.getElementById(key).checked = this.settings[key];
         }
-        document.getElementById('liveTiles').value = this.settings.liveTiles;
     }
 
     show(key) {
