@@ -37,11 +37,23 @@ skipped entirely.
 
 **Roam** streams the terrain window as you fly, so the world is
 unbounded rather than a fetched rectangle. Turn it off to stay in one
-window. With **Lock zoom** off, the window's zoom follows your speed and
-is always sized to take about a minute to cross, so fetching keeps up at
+window. The next window is started as soon as an edge comes within the
+draw distance — plus however far you will travel while it is fetched —
+so the view does not reach past the data. Only the newly exposed tiles
+are downloaded; the overlap is copied out of the outgoing mosaic, which
+in flight makes a move about 12 new tiles rather than 144. The HUD shows
+both: `edge 42 km vs 38 km of view · last move 12 new + 132 kept`. If
+`edge` ever drops below the view it says **past the data**, and what you
+are seeing beyond that distance is a flat plane rather than terrain.
+
+With **Lock zoom** off, the window's zoom follows your speed and is
+always sized to take about a minute to cross, so fetching keeps up at
 any speed: z13 over 60 km flying slowly, z11 over 235 km at 2 km/s. With
 it on — the default — the window holds its zoom and the speed ceiling
-does that job instead.
+does that job instead. At Mach 9 the whole margin between the view and
+the window edge is about 3.6 seconds of flight, so a fetch that stalls
+will briefly show the edge; unlocking the zoom is the way to buy more
+ground.
 
 **Speed** sets the cruise, in metres per second on real terrain: 30 m/s
 is a brisk drone, and it is what you move at with no key held. Hold

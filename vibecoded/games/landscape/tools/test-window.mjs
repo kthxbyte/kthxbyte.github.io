@@ -3,6 +3,7 @@
 // anything is drawn.
 import { rebase, windowZoom, coverage, metresPerTexel, nextCentre, needsMove }
     from '../src/terrain-window.js';
+import { carriedTiles } from '../src/terrain-tiles.js';
 
 let fails = 0;
 const ok = (name, cond, detail = '') => {
@@ -70,8 +71,8 @@ console.log('\nplacement:');
 ok('centre leads the velocity',
    nextCentre(1000, 1000, 1, 0, 3072)[0] === 1000 + 768);
 ok('no velocity, no lead', nextCentre(1000, 1000, 0, 0, 3072)[0] === 1000);
-ok('middle is safe', !needsMove(1536, 1536, 3072));
-ok('edge needs a move', needsMove(200, 1536, 3072));
+ok('middle is safe', !needsMove(1536, 1536, 3072, 1200));
+ok('edge needs a move', needsMove(200, 1536, 3072, 1200));
 
 // The window size is a panel control now, so every option in the list
 // has to behave. The old flat 20 km floor for minCoverage silently
@@ -188,6 +189,121 @@ console.log('\nso a zoom change must not move the camera vertically:');
     for (const to of [11, 10, 9]) bad *= 0.5;   // the old `camera.z *= k`
     ok('the old scaling really did drift', Math.abs(height(9, bad) - 500) > 400,
        `would have been ${height(9, bad).toFixed(0)} m, not 500 m`);
+}
+
+
+// The one inequality the streaming has to hold: the gap from the camera
+// to the nearest window edge must stay above the draw distance,
+// otherwise the ray march walks off the end of the data and the shader
+// returns sea level for the rest of the frame.
+//
+// Both halves of the placement used to be fractions of the window and
+// knew nothing about the draw distance. At twelve tiles and z12 the
+// half-extent is 1536 texels against a 1200-texel view, so the whole
+// budget is 336 texels -- and needsMove waited for 768 of it while
+// nextCentre spent 768 more leading ahead. Every fresh window was
+// therefore born with its trailing edge 768 texels away, well inside
+// the view, and no amount of speed or altitude was needed to see it.
+console.log('\nthe window keeps the draw distance inside itself:');
+{
+    const size = 3072, draw = 1200;        // 12 tiles, DRAW_PER_TILE = 100
+    const margin = size / 2 - draw;        // 336 texels of slack, all told
+    const gap = (x, y) => Math.min(x, y, size - x, size - y);
+
+    ok('there is any slack at all', margin > 0, `${margin} texels`);
+
+    // At rest the whole margin is available, so this is the easy case.
+    // If it does not hold here it holds nowhere.
+    const reach = draw;                                  // no speed lead
+    const maxLead = (size / 2 - reach) * 0.9;
+    const lead = nextCentre(1536, 1536, 1, 0, size, 0.25, maxLead)[0] - 1536;
+    // The camera does not move; the window centre does. In the window it
+    // lands in, the camera therefore sits `lead` texels behind centre.
+    const arrival = size / 2 - lead;
+
+    ok('a fresh window starts with every edge out of view',
+       gap(arrival, size / 2) >= draw,
+       `gap ${gap(arrival, size / 2).toFixed(0)}, draw ${draw}`);
+    ok('and does not instantly ask to move again',
+       !needsMove(arrival, size / 2, size, reach));
+
+    // Fly straight on until the trigger fires. The edge must still be
+    // out of view at that moment -- that is what "start loading it
+    // right away" has to mean.
+    const step = 1;
+    let x = arrival;
+    while (x < size && !needsMove(x, size / 2, size, reach)) x += step;
+    // The trigger fires the moment the gap dips below `reach`, so at a
+    // one-texel walk it lands one texel short of it. What matters is
+    // that `reach` is the draw distance or more: the fetch starts before
+    // the edge is inside the view, not after.
+    ok('the move triggers before the edge enters view',
+       reach >= draw && gap(x, size / 2) > reach - step - 1e-9,
+       `fired at gap ${gap(x, size / 2).toFixed(0)}, reach ${reach}`);
+    ok('with runway between arrival and trigger',
+       x - arrival > 0, `${(x - arrival).toFixed(0)} texels`);
+
+    // Speed brings the trigger forward rather than moving the edge.
+    const led = draw + margin * 0.5;
+    let f = size / 2;
+    while (f < size && !needsMove(f, size / 2, size, led)) f += 1;
+    ok('a speed lead triggers earlier, never later', f < x,
+       `${f.toFixed(0)} vs ${x.toFixed(0)} texels`);
+
+    // And the shape of the bug, so it fails if the constants come back.
+    const oldLead = size * 0.25, oldArrival = size / 2 - oldLead;
+    ok('the old fractions really did show the edge',
+       gap(oldArrival, size / 2) < draw,
+       `gap was ${gap(oldArrival, size / 2)} texels against a ${draw}-texel view`);
+}
+
+
+// A move that keeps the edge out of view has to happen often -- every
+// 640 texels at rest, more often at speed -- and a full 144-tile refetch
+// each time costs 11-14 s, which is slower than the camera crosses the
+// margin. The two only reconcile because the windows overlap almost
+// entirely: at the same zoom the tile grids ARE the same grid, so the
+// shift is a whole number of tiles and the overlap copies exactly.
+console.log('\nmoves carry the overlap instead of refetching it:');
+{
+    const at = (x, y, tiles = 12, zoom = 12) =>
+        ({ zoom, tiles, tileOrigin: [x, y] });
+
+    const one = carriedTiles(at(1227, 2440), at(1228, 2440));
+    ok('a one-tile step reuses all but a column',
+       one && one.count === 12 * 11, one ? `${one.count}/144` : 'nothing');
+    ok('and blits the old mosaic one tile left',
+       one.dx === -1 && one.dy === 0, `dx ${one.dx}, dy ${one.dy}`);
+
+    const diag = carriedTiles(at(1227, 2440), at(1229, 2442));
+    ok('a diagonal step reuses the inner block',
+       diag && diag.count === 10 * 10, diag ? `${diag.count}/144` : 'nothing');
+
+    ok('a disjoint window carries nothing',
+       carriedTiles(at(1227, 2440), at(1300, 2440)) === null);
+    ok('a zoom change carries nothing',
+       carriedTiles(at(1227, 2440), { ...at(613, 1220), zoom: 11 }) === null);
+    ok('no previous window carries nothing',
+       carriedTiles(null, at(1227, 2440)) === null);
+    ok('a window with no tile grid carries nothing',
+       carriedTiles({ zoom: 12 }, at(1227, 2440)) === null);
+
+    // The rectangle is expressed in the NEW window's tile coordinates,
+    // because that is what decides which jobs to skip. Everything it
+    // names must be a real tile of the new window.
+    let inRange = true;
+    for (const [dx, dy] of [[-3, 0], [0, -3], [3, 2], [-2, 4], [11, 11]]) {
+        const c = carriedTiles(at(1227, 2440), at(1227 - dx, 2440 - dy));
+        if (!c) continue;
+        if (c.x0 < 0 || c.y0 < 0 || c.x1 > 12 || c.y1 > 12) inRange = false;
+    }
+    ok('the carried rectangle stays inside the new window', inRange);
+
+    // What it buys, at the move rate the fix above produces.
+    const step = 2;                       // tiles moved per window at speed
+    const kept = carriedTiles(at(0, 0), at(step, step));
+    ok('a two-tile move fetches only the new edge',
+       144 - kept.count === 144 - 100, `${144 - kept.count} tiles, not 144`);
 }
 
 console.log(fails ? `\n${fails} FAILED` : '\nall passed');

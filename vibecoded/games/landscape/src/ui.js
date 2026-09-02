@@ -166,7 +166,7 @@ export class UI {
 
     toggle() { this.panel.hidden = !this.panel.hidden; }
 
-    update(fps, camera, width, height, terrain, detail, lod) {
+    update(fps, camera, width, height, terrain, detail, lod, stream) {
         const head = `<b>${fps.toFixed(0)}</b> fps &nbsp; ${width}×${height}<br>`;
         if (!terrain.procedural) {
             this.stats.innerHTML = head +
@@ -194,6 +194,23 @@ export class UI {
         const win = terrain.meta
             ? ` · window <b>z${terrain.meta.zoom}</b> ${(terrain.size * mpp / 1000).toFixed(0)} km`
             : '';
+        // The one number that says whether the streaming is keeping up:
+        // how far the nearest edge of the data is, against how far the
+        // eye can see. Below the draw distance the march runs off the
+        // end of the mosaic and the rest of the frame is the flat plane
+        // under a smear of the last row of imagery texels. The move is
+        // triggered from exactly this quantity, so watching it is how
+        // the trigger is checked.
+        const streamLine = !stream ? '' :
+            `<br>edge <b>${(stream.gap * mpp / 1000).toFixed(1)} km</b>` +
+            ` vs ${km.toFixed(1)} km of view` +
+            (stream.gap < this.settings.drawDistance ? ' — <b>past the data</b>'
+             : stream.moving ? ' · fetching' : '') +
+            (stream.move
+                ? ` · last move <b>${stream.move.fetched}</b> new` +
+                  ` + ${stream.move.reused} kept · ` +
+                  `${stream.move.seconds.toFixed(1)} s`
+                : '');
         // Enough numbers to reason about the level of detail: how far
         // away the ground being looked at is, what a screen pixel covers
         // there, and what the layer actually delivers.
@@ -241,7 +258,7 @@ export class UI {
             `(ground ${ground.toFixed(0)} m)<br>` +
             `<b>${lat.toFixed(4)}°, ${lon.toFixed(4)}°</b><br>` +
             `view <b>${km.toFixed(1)} km</b> · ${mpp.toFixed(1)} m/texel<br>` +
-            speedTxt + win +
+            speedTxt + win + streamLine +
             lookLine + switchLine + detailLine;
     }
 }

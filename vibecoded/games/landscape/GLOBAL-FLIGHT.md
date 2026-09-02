@@ -118,10 +118,68 @@ stationary.
 
 ## 3. Relocation, and why same-zoom moves are free
 
-A new window is fetched when the camera leaves the middle half of the
-current one, or when the speed-derived zoom changes. It is centred
-ahead along the velocity, not on the camera, for the same reason the
-imagery rectangle is.
+**The rule is one inequality: the gap from the camera to the nearest
+window edge must stay above the draw distance.** Cross it and the ray
+march walks off the end of the mosaic, where `heightAt` has nothing to
+return but sea level -- a flat plane, under a radial smear of the last
+row of imagery texels, since the imagery is `CLAMP_TO_EDGE`. That is
+what "the end of the heightmap" looks like from altitude (19.4).
+
+So a new window is fetched when an edge comes within the draw distance
+plus however far the camera will travel while the fetch is in flight,
+or when the speed-derived zoom changes. It is centred ahead along the
+velocity, not on the camera, for the same reason the imagery rectangle
+is -- but the lead is capped, because leading ahead buys runway in front
+by spending exactly as much behind.
+
+Both halves of that used to be fractions of the window that knew nothing
+about the draw distance, and the fractions were larger than the budget:
+
+| | texels | km at z12, lat -33 |
+|---|---|---|
+| half-window | 1536 | 49.2 |
+| draw distance | 1200 | 38.5 |
+| **margin: everything the camera has to play with** | **336** | **10.8** |
+| old trigger (`keep = 0.5`) | 768 | 24.6 |
+| old lead (`0.25 * size`) | 768 | 24.6 |
+
+The trigger waited for more than twice the margin, and the lead spent
+more than twice the margin again. The second is the sharper failure: a
+lead of 768 texels drops the camera 768 texels behind the centre of the
+window it just fetched, so the trailing edge is 768 texels away against
+a 1200-texel view. **Every fresh window was born with an edge inside the
+frame** -- no speed and no altitude required, only a glance backwards.
+Altitude is merely what removes the relief that was hiding it.
+
+Measured over the same 120 s run, Vina to Argentina at Mach 9: the old
+constants put the view past the data on a roughly 15 s sawtooth even
+with every tile already cached, because the failure is structural rather
+than a matter of bandwidth. Standing the trigger and the lead off the
+draw distance instead holds the edge at 38-48 km against a 38 km view
+for the length of the flight, and gives way only when an individual
+fetch stalls (see §3.1).
+
+### 3.1 What a move costs, and the ceiling that leaves
+
+A move used to refetch the whole mosaic. It no longer does: at the same
+zoom the two windows are cut from the *same* slippy grid, so the shift
+is a whole number of tiles, the overlap blits across exactly, and only
+the newly exposed edge is fetched (`carriedTiles`). Measured on two
+equivalent two-tile steps off one cold window over the Alps -- 144 tiles
+in 22.1 s the old way against 54 in 10.5 s carrying the overlap, with
+the two mosaics identical across all 9,437,184 pixels. In flight at Mach
+9 a move is typically **12 new tiles and 132 kept, in about a second**.
+
+It is worth being exact about what that does and does not buy, because
+the margin is small in *time*. At Mach 9 the whole 10.8 km margin is
+3.6 seconds of flight. A one-second move fits inside it comfortably; a
+fetch that stalls to seven or eight seconds does not, and the view does
+run past the data until the next window lands. That is a data rate, not
+a policy: no trigger can start a fetch earlier than the moment the
+camera enters the margin. Raising it means a wider window in ground
+terms -- more tiles, or the coarser zoom that unchecking **Lock zoom**
+restores, which is the escape hatch the speed-driven `windowZoom` was
+built to be (§2).
 
 The fetch is double-buffered: the old window keeps rendering, and the
 new one is swapped in complete. On swap, everything holding world

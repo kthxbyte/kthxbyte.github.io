@@ -1443,6 +1443,86 @@ which sets the exaggeration, so anything that moves the zoom moves how
 tall the world looks, and anything that rebases across a zoom change has
 to know which axes the zoom actually applies to.
 
+**And the flat plane is not always benign, because the window has to be
+somewhere.** Everything above concerns how far the view reaches from the
+*centre* of a window. `DRAW_PER_TILE = 100` against 128 texels of
+half-window per tile reserves 22% of the half-extent as margin, which is
+correct and was deliberate -- but the camera does not sit at the centre,
+and nothing that decided where it may sit knew the number existed.
+
+At twelve tiles and z12 the half-extent is 1536 texels and the view is
+1200, so the margin is 336 texels, 10.8 km. `needsMove` waited for the
+camera to be 768 texels off centre; `nextCentre` led the new window 768
+texels ahead of the camera. Both are more than twice the margin, and the
+second is the one that matters: a lead of 768 leaves the camera 768
+texels behind the centre of the window it has just fetched, so its
+trailing edge is 768 texels away against a 1200-texel view. **Every
+fresh window was born with an edge inside the frame.** No speed, no
+altitude, no slow network -- just a look over the shoulder. Altitude is
+what made it *visible*, because from low down the far ground is hidden
+behind relief and the last fifth is faded out anyway; from 5 km up
+nothing occludes it, and what you see is a flat plateau under coloured
+streaks radiating to the horizon. The streaks are the imagery, one texel
+row wide, stretched by `CLAMP_TO_EDGE`; the plateau is `uSeaTexels`.
+
+The fix is to express both quantities in the units that decide them.
+The gap to the nearest edge must exceed the draw distance, plus however
+far the camera travels while a fetch is in flight:
+
+    reach = drawDistance + speed * FETCH_SECONDS      (capped at margin/2)
+    needsMove   <=>  min(x, y, size-x, size-y) < reach
+    nextCentre lead  <=  (size/2 - reach) * 0.9
+
+Speed moves the trigger forward; it cannot move the edge back. The 0.9
+is what stops a fresh window arriving exactly on its own trigger.
+
+Two consequences worth recording. First, the new trigger can sit inside
+the *tile quantisation*: windows are cut on whole tiles, so a camera less
+than a tile from the centre re-fetches an identical `tileOrigin`, and
+with a trigger this tight it would ask again on the next tick and never
+stop. A move that cannot shift the grid is skipped. The old
+quarter-of-a-window trigger fired at 768 texels, comfortably outside the
+256-texel quantisation, so this failure mode did not exist before and
+had to be introduced along with the fix.
+
+Second, the margin is small in *time*, and that is now the binding
+constraint rather than the policy. A 120 s run from Vina into Argentina
+at Mach 9, driven over CDP so the acceleration ramp ran in wall-clock
+time, held the edge at 38-48 km against a 38 km view for most of its
+length and gave way only across a 20 s stretch where two consecutive
+fetches took 7.6 s each -- at 3 km/s that is 22.8 km against a 10.8 km
+margin. It recovered on its own. The same flight on the old constants
+went past the data on a roughly 15 s sawtooth *with every tile already
+in cache*, which is the difference between a bandwidth problem and a
+structural one.
+
+Which is what makes the move itself worth making cheap. At the same zoom
+two windows are cut from the same slippy grid, so the shift is a whole
+number of tiles and the overlap copies across exactly: `carriedTiles`
+returns the pixel offset to blit the outgoing mosaic at and the tile
+rectangle that therefore needs no fetching. Measured on two equivalent
+two-tile steps off one cold window over the Alps, 144 tiles in 22.1 s
+against 54 in 10.5 s, and the two mosaics identical across all 9,437,184
+pixels. In flight a move is typically 12 new tiles and 132 kept, in
+about a second. The cost is one retained RGBA copy of the window, 37.7
+MB at twelve tiles, held only while that window is current.
+
+The tiles carry no `Cache-Control`, only a `Last-Modified` from 2017, so
+how much of the overlap a browser would have served from its own cache
+is a heuristic and not something to rely on -- which is the second
+reason to do the carrying explicitly rather than hope.
+
+One general point, since this is the third bug in this section with the
+same shape as the other two. A quantity expressed in the wrong units
+will look reasonable and behave correctly right up until the thing it
+was implicitly assuming changes. `keep = 0.5` is a sensible-looking
+number; it is only wrong because it is a fraction of the window and the
+question is about the draw distance. `reliefScale` broke the vertical
+rebase the same way, and the fitted sea plane (19.5) broke on the same
+principle from the other direction -- a statistic used as a geometry.
+When a constant governs a relationship between two quantities, write it
+in terms of both.
+
 ### 19.5 The sea is a plane, not terrain
 
 At this zoom the tiles carry no bathymetry: the ocean is flat at 0 m,

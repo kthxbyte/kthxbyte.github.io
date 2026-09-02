@@ -7,9 +7,10 @@ import { loadImagery, DetailImagery, IMAGERY_ATTRIBUTION } from './imagery.js';
 import { UI, DEFAULTS, fail } from './ui.js';
 import { loadImage, decodeHeights, createHeightTexture } from './gl.js';
 import { windOffsets } from './wind.js';
-import { fetchTerrain } from './terrain-tiles.js';
+import { fetchTerrain, tileXY } from './terrain-tiles.js';
 import { PLACES } from './places.js';
-import { windowZoom, rebase, scaleBetween, nextCentre, needsMove }
+import { windowZoom, rebase, scaleBetween, nextCentre, needsMove, safeMargin,
+         edgeGap }
     from './terrain-window.js';
 
 async function loadText(url) {
@@ -94,6 +95,17 @@ function texelOf(lat, lon, meta) {
 // Re-derived only when the window changes size, so the slider still owns
 // the value in between.
 const DRAW_PER_TILE = 100;
+// How long a window fetch takes, and therefore how far ahead of the edge
+// the next one has to be started. Measured cold, carrying the overlap
+// across: a two-tile move over the Alps fetched 54 of 144 tiles in
+// 10.5 s. Without the carry-over the same move took 22.1 s, which is
+// also roughly what a first window costs. Rounded to the move case, and
+// down rather than up -- overshooting the lead costs runway on the
+// trailing edge, which is the thing being fixed.
+//
+// It is latency-bound, not count-bound: browsers hold six connections
+// per host, so 54 tiles is nine rounds however high CONCURRENCY is set.
+const FETCH_SECONDS = 12;
 let drawDerivedFor = 0;
 
 // Clipmap rings, as zoom offsets from the level the LOD picks. One ring
@@ -181,9 +193,18 @@ function makeTerrain(gl, spec) {
     const heightTex = createHeightTexture(gl, heights, size,
                                           { wrap: spec.wrap, unit: 0 });
     const meta = spec.meta;
+    // The mosaic is kept, not dropped, so the next window can blit the
+    // overlap out of it instead of refetching it. It costs one RGBA copy
+    // of the window -- 37.7 MB at twelve tiles -- held for exactly as
+    // long as the window is current, and it buys back the 11.6 s a
+    // measured two-tile move spent re-downloading ground it already had.
+    // Only live mosaics arrive on a canvas; the 2010 map is an <img> and
+    // never moves, so it keeps nothing.
+    const canvas = typeof spec.image.getContext === 'function'
+        ? spec.image : null;
     return {
         name: spec.name, size, heights, heightTex, maxTexels, minTexels, hasSea,
-        reliefScale,
+        reliefScale, canvas,
         defaults: spec.defaults || {},
         retroDistance: spec.retroDistance || 300,
         wrap: spec.wrap, procedural: spec.procedural,
@@ -356,6 +377,9 @@ async function main() {
     // window IS coarse and wide enough to reach the horizon, so there is
     // only ever one terrain layer. See GLOBAL-FLIGHT.md.
     let windowBusy = false;
+    // What the last move actually cost, for the HUD: the point of the
+    // carry-over is that "new" stays small however often a move happens.
+    let lastMove = null;
     async function moveWindow() {
         const t = current;
         if (windowBusy || !t.procedural || !t.meta) return;
@@ -412,26 +436,85 @@ async function main() {
         const zoomMove = !settings.lockZoom
                       && Math.abs(want.zoomF - t.meta.zoom) > 1.0
                       && want.zoom !== t.meta.zoom;
+        // How far ahead the fetch has to be started. The camera can see
+        // `drawDistance` texels and it keeps travelling while a window
+        // is in flight, so the trigger has to stand off by both. Speed
+        // moves the trigger forward; it cannot move the edge back.
+        //
+        // The lead is capped at half the margin. Spend all of it and the
+        // trigger lands exactly where the previous move dropped the
+        // camera, and the window refetches without pause; half leaves
+        // runway on both sides of centre.
+        //
+        // What is left is a limit in time rather than in policy. At
+        // twelve tiles and z12 the margin is 336 texels, 10.8 km, which
+        // at Mach 9 is 3.6 seconds of flight. Carrying the overlap makes
+        // a move about a second, which fits; a fetch that stalls to
+        // seven or eight does not, and the view runs past the data until
+        // the next window lands. Measured over a 120 s run at Mach 9:
+        // held for the length of it apart from one such stall, which it
+        // recovered from on its own. More ground per window is the only
+        // real answer, which is what unlocking the zoom buys.
+        const margin = safeMargin(t.meta.size, settings.drawDistance);
+        const lead = Math.min(camera.speed * FETCH_SECONDS,
+                              Math.max(0, margin * 0.5));
+        // A window that cannot hold its own view from the centre is a
+        // configuration error rather than something a move can fix, so
+        // the trigger is clamped short of "always true".
+        const reach = Math.min(settings.drawDistance + lead,
+                               t.meta.size * 0.45);
         if (!zoomMove && !sizeMove
-            && !needsMove(camera.x, camera.y, t.meta.size)) return;
+            && !needsMove(camera.x, camera.y, t.meta.size, reach)) return;
 
         windowBusy = true;
         // A resize centres on the camera; only a move leads ahead of it.
+        // Lead ahead by whatever the reach leaves over, less a tenth so
+        // the camera lands strictly inside the trigger rather than on
+        // it. Leading further would buy runway in front by handing the
+        // same distance to the edge behind, which is the trade that put
+        // the trailing edge inside the view on every move.
         const [cx, cy] = sizeMove
             ? [camera.x, camera.y]
             : nextCentre(camera.x, camera.y,
-                         camera.vel[0], camera.vel[1], t.meta.size);
+                         camera.vel[0], camera.vel[1], t.meta.size,
+                         0.25, (t.meta.size / 2 - reach) * 0.9);
         const centre = t.latLon(cx, cy);
         const zoom = zoomMove ? want.zoom : t.meta.zoom;
+        // A move is only worth making if it actually shifts the tile
+        // grid. Windows are cut on whole tiles, so a camera less than a
+        // tile from the centre re-fetches the identical origin -- and
+        // now that the trigger stands off by the draw distance rather
+        // than by a quarter of the window, that case is reachable: the
+        // grid quantisation is 256 texels and the trigger can sit inside
+        // it. Without this the window would ask again on the next tick,
+        // fetch nothing, and never stop. If the origin cannot move, the
+        // view really does reach past the data, and the HUD says so.
+        const [ntx, nty] = tileXY(centre.lat, centre.lon, zoom);
+        if (!zoomMove && !sizeMove
+            && ntx - (tiles >> 1) === t.meta.tileOrigin[0]
+            && nty - (tiles >> 1) === t.meta.tileOrigin[1]) {
+            windowBusy = false;
+            return;
+        }
         let got;
+        const began = performance.now();
         try {
             got = await fetchTerrain({
                 lat: centre.lat, lon: centre.lon, zoom, tiles,
+                // Same zoom and the same slippy grid, so the overlap is
+                // a whole number of pixels and copies exactly. A lead of
+                // a tile or two leaves most of the window already in
+                // hand; only the newly exposed edge is fetched.
+                prev: { canvas: t.canvas, meta: t.meta },
             });
         } catch (err) {
             windowBusy = false;
             return;
         }
+        lastMove = {
+            fetched: got.fetched, reused: got.reused,
+            seconds: (performance.now() - began) / 1000,
+        };
         // The old window has been rendering throughout; swap only now.
         const key = t.name;
         const next = makeTerrain(gl, {
@@ -858,7 +941,11 @@ async function main() {
             frames = 0; fpsClock = now;
             ui.update(fps, camera, canvas.width, canvas.height, current,
                       settings.imagery ? detailInfo : [null, null],
-                      detail.length ? detail[0].lastTarget : null);
+                      detail.length ? detail[0].lastTarget : null,
+                      current.procedural ? {
+                          gap: edgeGap(camera.x, camera.y, current.size),
+                          moving: windowBusy, move: lastMove,
+                      } : null);
         }
         requestAnimationFrame(frame);
     }
