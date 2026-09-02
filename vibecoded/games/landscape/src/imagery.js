@@ -34,7 +34,10 @@ const CONCURRENCY = 16;
 // that OpenStreetMap and the terrain tiles use. Getting this backwards
 // silently returns a valid tile from the wrong place.
 function tileUrl(z, x, y) {
-    return `${ESRI}/${z}/${y}/${x}`;
+    // Longitude wraps; latitude is clamped by the caller. Needed once
+    // the terrain window can be wider than the tile grid at low zoom.
+    const grid = 2 ** z;
+    return `${ESRI}/${z}/${y}/${((x % grid) + grid) % grid}`;
 }
 
 function loadOnce(url) {
@@ -72,7 +75,7 @@ async function pool(items, limit, worker) {
 
 // Starts the fetch and returns immediately with a texture that fills in
 // as tiles arrive, so the view is usable while it loads.
-export function loadImagery(gl, meta, { zoom, onProgress }) {
+export function loadImagery(gl, meta, { zoom, seed, onProgress }) {
     const k = 2 ** (zoom - meta.zoom);
     const n = meta.tiles * k;
     const size = n * 256;
@@ -103,16 +106,56 @@ export function loadImagery(gl, meta, { zoom, onProgress }) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(fb);
 
-    const state = { unit: UNIT, size, zoom, done: false };
+    const state = { unit: UNIT, size, zoom, x0, y0, done: false, carried: 0 };
+
+    // Carry the outgoing mosaic across. Without this, moving the terrain
+    // window blanks the whole world to the clear colour and refills it
+    // over a couple of hundred tiles -- which is what actually breaks the
+    // illusion of continuity when crossing between areas, far more than
+    // any seam in the heightmap.
+    //
+    // A same-zoom move keeps the same imagery zoom and mosaic size, so
+    // the overlap is a whole number of pixels and copyTexSubImage2D moves
+    // it exactly: no shader, no filtering, no resampling error. The tiles
+    // it covers then do not need fetching at all, which typically halves
+    // the request count as well.
+    let kept = null;
+    if (seed && seed.zoom === zoom && seed.size === size && seed.texture) {
+        const dx = (x0 - seed.x0) * 256, dy = (y0 - seed.y0) * 256;
+        const w = size - Math.abs(dx), h = size - Math.abs(dy);
+        if (w > 0 && h > 0) {
+            const fbo = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
+                                    gl.TEXTURE_2D, seed.texture, 0);
+            gl.activeTexture(gl.TEXTURE0 + UNIT);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            kept = {
+                x: Math.max(-dx, 0), y: Math.max(-dy, 0), w, h,
+            };
+            gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, kept.x, kept.y,
+                                 Math.max(dx, 0), Math.max(dy, 0), w, h);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.deleteFramebuffer(fbo);
+        }
+    }
+
+    // Offsets are whole tiles, so the kept rectangle lands on tile
+    // boundaries and this test is exact.
+    const covered = (i, j) => kept
+        && i * 256 >= kept.x && (i + 1) * 256 <= kept.x + kept.w
+        && j * 256 >= kept.y && (j + 1) * 256 <= kept.y + kept.h;
 
     const jobs = [];
     for (let j = 0; j < n; j++) {
-        for (let i = 0; i < n; i++) jobs.push([i, j]);
+        for (let i = 0; i < n; i++) if (!covered(i, j)) jobs.push([i, j]);
     }
+    if (kept) state.carried = n * n - jobs.length;
 
     let done = 0, failed = 0;
     state.ready = pool(jobs, CONCURRENCY, async ([i, j]) => {
         try {
+            if (y0 + j < 0 || y0 + j >= 2 ** zoom) { done++; return; }
             const img = await loadTile(tileUrl(zoom, x0 + i, y0 + j));
             gl.activeTexture(gl.TEXTURE0 + UNIT);
             gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -139,8 +182,11 @@ export function loadImagery(gl, meta, { zoom, onProgress }) {
         return { failed, total: jobs.length };
     });
 
-    // `done` gates the detail layer's seeding: seeding from a mosaic
-    // that is still all clear-colour paints flat sand over the terrain.
+    // `done` gates the detail layer's seeding, and through it the ring's
+    // start: seeding from a mosaic that is still all clear-colour paints
+    // flat sand over the terrain, so a ring that cannot seed does not
+    // begin. `ready` settling is what releases that gate, so a failed
+    // base releases it too.
     state.texture = texture;
     return state;
 }
@@ -259,6 +305,13 @@ const RECENTRE_AT = 0.38;      // fraction of the rect before refetching
 const MAX_LOOK = 15000;        // metres; beyond this the base is plenty
 const MIN_SIN = Math.sin(4 * Math.PI / 180);   // grazing-ray guard
 
+// A ring is only worth fetching if it outlives the flight across it.
+// Loading one is a measured 1.83 s for 100 tiles, so a rectangle the
+// camera crosses in less than a few times that is stale before it
+// arrives: at 2.3 km/s a 3 km z17 span lasts 1.3 s. Five seconds of
+// flight is the floor.
+const SPEED_HORIZON = 5.0;
+
 // The reference ray is taken slightly below screen centre. Resolution
 // demand is set by the nearest ground in view, but centring the layer on
 // the nearest ground would put it under the camera rather than where the
@@ -273,6 +326,12 @@ const REF_BELOW_CENTRE = 0.15;   // fraction of the vertical field
 // where it is needed, at the cost of detail on ground almost directly
 // below -- which is out of frame at the shallow pitches this matters at.
 const AHEAD = 0.55;
+
+// The level the rings sit at when the zoom ladder is locked. 17 is the
+// finest Esri serves over most ground; where a region tops out lower,
+// calibrate() has already pulled maxZoom down and the clamp below picks
+// that up, so this is a ceiling to aim at rather than a promise.
+const LOCK_DETAIL_ZOOM = 17;
 
 export class DetailImagery {
     constructor(gl, meta, {
@@ -292,6 +351,16 @@ export class DetailImagery {
         // the view -- behind tiles for the periphery.
         this.concurrency = concurrency || CONCURRENCY;
         this.base = base || null;    // full-extent mosaic, to seed from
+        // The base gates the first rectangle (see update). Watch its
+        // promise rather than only its `done` flag: `done` is set on
+        // success, so a base that fails outright would hold the ring back
+        // for the life of the window. Settled, not succeeded, is the
+        // condition -- either way there is no longer any point waiting.
+        this.baseSettled = !base;
+        if (base && base.ready) {
+            const release = () => { this.baseSettled = true; };
+            base.ready.then(release, release);
+        }
         this.seed = null;            // lazily built blit program
         this.baseZoom = baseZoom;         // zoom of the full-extent mosaic
         this.size = size;                 // texture pixels per side
@@ -403,8 +472,27 @@ export class DetailImagery {
         const reachF = this.meta.zoom
                      + Math.log2(this.tiles * 256 * this.metresPerBaseTexel
                                  * 0.89 / dist) - 0.5;
-        const zoomF = Math.min(asked, reachF);
-        const limited = reachF < asked;
+        // Third cap, same shape as the other two: continuous, so the
+        // hysteresis below still compares like with like.
+        const speedF = this.meta.zoom + Math.log2(
+            this.tiles * 256 * this.metresPerBaseTexel
+            / Math.max((s.speedMps || 0) * SPEED_HORIZON, 1));
+        let zoomF = Math.min(asked, reachF, speedF);
+        let limited = Math.min(reachF, speedF) < asked;
+
+        // Locked: one level, always. The three caps above are what made
+        // the ladder move -- what the screen can resolve, what the
+        // rectangle can reach, what survives the flight across it -- and
+        // each of them is a real constraint, so overriding them has real
+        // costs. Reach is the one that shows: a 2560 px rectangle at z17
+        // spans 2.7 km, so anything beyond about 1.4 km of the rectangle
+        // centre falls back to the base mosaic instead of stepping down
+        // to a coarser ring that would have covered it. In exchange the
+        // ground never changes sharpness while you look at it.
+        if (s.lockZoom) {
+            zoomF = Math.min(this.maxZoom, LOCK_DETAIL_ZOOM);
+            limited = false;
+        }
 
         // Below this the full-extent base mosaic is already as fine as
         // the screen can resolve.
@@ -417,9 +505,26 @@ export class DetailImagery {
 
         // Centred between the camera and the point it is looking at, so
         // the rectangle serves both rather than trailing behind.
-        const ahead = dist * Math.cos(refPitch) * AHEAD / this.metresPerBaseTexel;
+        //
+        // Capped by what this level can actually reach, which matters
+        // only when the ladder is locked -- unlocked, the level is chosen
+        // so that reach >= dist and the cap never bites. Locked it bites
+        // hard and in the worst direction: at a 4.27 km look a z17
+        // rectangle led by 0.55 * dist covers 0.99 to 3.71 km, so the
+        // ground directly under the camera is outside it and reads as
+        // base mosaic. Leading by the reach instead covers 0 to 2.69 km
+        // -- everything the rectangle can serve, starting from the
+        // camera, which is where detail is worth having.
+        const useful = Math.min(dist, this.reach(zoom));
+        const ahead = useful * Math.cos(refPitch) * AHEAD
+                    / this.metresPerBaseTexel;
         return {
             zoom, zoomF, dist, auto, threshold: wanted, limited,
+            // How far this level's rectangle actually serves. Only the
+            // readout uses it, and only when the ladder is locked, where
+            // it is the number that explains the frame: past it there is
+            // no coarser ring to step down to, just the base mosaic.
+            reach: this.reach(zoom),
             cx: s.x + s.dirX * ahead,
             cy: s.y + s.dirY * ahead,
         };
@@ -505,6 +610,22 @@ export class DetailImagery {
             const placed = Math.max(dx, dy) < cur.span * RECENTRE_AT;
             if (zoomOk && placed) return;
         }
+        // Do not start a rectangle that cannot be published the moment it
+        // exists. The seed is taken from the base mosaic, and a base that
+        // is still loading is still clear-colour, so a ring started too
+        // early has nothing to show until all hundred of its own tiles
+        // have landed -- precisely the dead time the early publish was
+        // added to remove.
+        //
+        // This was invisible while the window was always twelve tiles:
+        // that base is 144 tiles, so it had always finished by the time
+        // the ceiling probe let a ring start. At four tiles the base is
+        // 64 and the whole page is quicker, so the ring wins the race and
+        // loses the seed. Waiting costs nothing that was not already
+        // being paid -- the ring would have been invisible for that whole
+        // time anyway -- and it makes every window size behave alike.
+        if (!this.current && !this.baseSettled) return;
+
         this.stale = false;
         this.load(target.zoom, target.cx, target.cy);
     }

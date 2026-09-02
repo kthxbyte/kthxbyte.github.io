@@ -9,6 +9,8 @@ import { loadImage, decodeHeights, createHeightTexture } from './gl.js';
 import { windOffsets } from './wind.js';
 import { fetchTerrain } from './terrain-tiles.js';
 import { PLACES } from './places.js';
+import { windowZoom, rebase, scaleBetween, nextCentre, needsMove }
+    from './terrain-window.js';
 
 async function loadText(url) {
     const res = await fetch(url);
@@ -46,6 +48,9 @@ function applyQuerySettings(settings) {
     if (q.has('detail')) put('detailDistance', parseFloat(q.get('detail')));
     if (q.has('grid')) put('debugGrid', q.get('grid') !== '0');
     if (q.has('wind')) put('wind', parseFloat(q.get('wind')));
+    if (q.has('roam')) put('roam', q.get('roam') !== '0');
+    if (q.has('lock')) put('lockZoom', q.get('lock') !== '0');
+    if (q.has('speed')) put('speedLog', Math.log10(parseFloat(q.get('speed'))));
     if (q.has('tiles')) put('liveTiles', parseInt(q.get('tiles'), 10));
     if (q.has('tz')) put('liveZoom', parseInt(q.get('tz'), 10));
     if (q.has('fog')) put('fogDensity', parseFloat(q.get('fog')));
@@ -63,6 +68,33 @@ function applyQueryPose(camera) {
         if (q.has(k)) camera[k] = parseFloat(q.get(k));
     }
 }
+
+// A latitude/longitude as texel coordinates inside a fetched window --
+// the inverse of the terrain's own latLon(), and the only way a preset
+// can mean a place rather than a tile.
+function texelOf(lat, lon, meta) {
+    const n = 256 * 2 ** meta.zoom;
+    const r = lat * Math.PI / 180;
+    return {
+        x: (lon + 180) / 360 * n - meta.tileOrigin[0] * 256,
+        y: (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n
+           - meta.tileOrigin[1] * 256,
+    };
+}
+
+// Draw distance as a fraction of the window: exactly 100 texels of view
+// per tile, which reproduces the historical 1200 at twelve tiles and
+// keeps a small window from being asked to draw past its own edge. Draw
+// distance is measured in texels, which is what lets it survive a zoom
+// change untouched -- but it is also why it cannot survive a resize
+// untouched. What it buys is not correctness: the shader already returns
+// sea level outside the window (19.4), so an over-long view degrades to
+// a flat plane rather than to garbage. It buys the plane not being
+// there, which at 4x4 would otherwise be most of the frame.
+// Re-derived only when the window changes size, so the slider still owns
+// the value in between.
+const DRAW_PER_TILE = 100;
+let drawDerivedFor = 0;
 
 // Clipmap rings, as zoom offsets from the level the LOD picks. One ring
 // only, and the second one was built and measured before being taken out
@@ -84,12 +116,35 @@ function applyQueryPose(camera) {
 //                       at the outer sixths -- real, and confined to
 //                       exactly where the geometry predicted
 //
-// Four to six per cent at the edges of the frame does not pay for double
-// the tiles per refresh and another 52 MB of texture. The machinery
-// stays (DetailImagery takes `unit` and `zoomOffset`, the shader blends
-// two rings coarsest-first), so adding `-1` here turns it back on; the
-// measurements above are the case that would need to change.
-const RING_OFFSETS = [0];
+// Four to six per cent at the edges of the frame did not pay for double
+// the tiles per refresh and another 35 MB of texture, and the ring came
+// back out.
+//
+// The case did change, twice over, and the second ring is back at a
+// different offset. Both premises above have gone:
+//
+//  - "the exposed sides are far away, where a screen pixel already
+//    covers more than the base mosaic" assumed an 8.5 m/px base. Over a
+//    twelve-tile window there is no such base: the imagery's free zoom
+//    step is refused because 12 * 256 * 2 = 6144 exceeds the 4096 cap,
+//    so the base is the terrain's own zoom, 32 m/px. There is a great
+//    deal of headroom.
+//  - the old experiment used -1. A z16 ring reaches 4.56 km against
+//    z17's 2.28, so it duplicated the ring above it and left the rest of
+//    the frame exactly as it was. That is why it measured x1.00.
+//
+// -2 straddles the gap instead of nesting inside it: z15 is 4 m/px out
+// to 9.13 km, eight times the base, over the band between the sharp
+// rectangle and the horizon. With the zoom ladder locked that band is
+// most of the picture, because nothing steps down into it any more.
+//
+//   ring   m/px    serves to
+//   z17    1.00     2.28 km    <- offset  0
+//   z15    4.01     9.13 km    <- offset -2
+//   base  32.05     everywhere
+//
+// Use -3 instead to trade sharpness for reach: z14 is 8 m/px to 18 km.
+const RING_OFFSETS = [0, -2];
 
 // A terrain dataset: heights on the GPU for the march, the same heights
 // on the CPU for terrain-follow and the floor, and enough metadata to
@@ -107,11 +162,20 @@ function makeTerrain(gl, spec) {
     // not, or the flat plane outside the data is painted as ocean at
     // whatever altitude the valley floor happens to be.
     const hasSea = mpp ? minTexels * mpp < 5 : true;
+    // Relief in texels vanishes as the window zooms out: a texel is
+    // 17 m at z13 but 2.4 km at z6, so Everest is 3 texels tall in a
+    // 3000-texel world and the planet renders as a plate. Scaling the
+    // exaggeration by the texel size holds relief-in-texels constant, so
+    // a mountain keeps its shape at any zoom and the slider keeps
+    // meaning "how exaggerated", not "how exaggerated at z13". Identity
+    // at z13, so nothing changes for ordinary flying.
+    const reliefScale = spec.meta ? 2 ** (13 - spec.meta.zoom) : 1;
     const heightTex = createHeightTexture(gl, heights, size,
                                           { wrap: spec.wrap, unit: 0 });
     const meta = spec.meta;
     return {
         name: spec.name, size, heights, heightTex, maxTexels, minTexels, hasSea,
+        reliefScale,
         defaults: spec.defaults || {},
         retroDistance: spec.retroDistance || 300,
         wrap: spec.wrap, procedural: spec.procedural,
@@ -145,9 +209,9 @@ async function main() {
     if (touchMode) settings.renderScale = 0.6;
     const pinned = applyQuerySettings(settings);
 
-    let sources, images, calderaMeta;
+    let sources, images;
     try {
-        [sources, images, calderaMeta] = await Promise.all([
+        [sources, images] = await Promise.all([
             Promise.all([
                 loadText('./src/shaders/terrain.vert'),
                 loadText('./src/shaders/terrain.frag'),
@@ -156,10 +220,7 @@ async function main() {
                 loadImage('./assets/heightmap.png'),
                 loadImage('./assets/texture.png'),
                 loadImage('./assets/sky.png'),
-                loadImage('./assets/terrain-caldera.png'),
-            ]).then(([heightmap, texture, sky, caldera]) =>
-                ({ heightmap, texture, sky, caldera })),
-            loadJSON('./assets/terrain-caldera.json'),
+            ]).then(([heightmap, texture, sky]) => ({ heightmap, texture, sky })),
         ]);
     } catch (err) {
         fail('Could not load the demo’s files',
@@ -189,28 +250,11 @@ async function main() {
             defaults: { fogDensity: 0.0012, sunAzimuth: 135, sunElevation: 45 },
             retroDistance: 300,
         }),
-        caldera: makeTerrain(gl, {
-            name: 'caldera', image: images.caldera, encoding: 'terrarium',
-            meta: calderaMeta, wrap: false, procedural: true,
-            // Offshore, looking east: 5.5 km of water, then the
-            // coastline, then the range climbing to 950 m. The approach
-            // from the sea shows the whole structure at once.
-            // The mosaic grew from 7x7 tiles to 16x16, and its tile
-            // origin moved with it (2481,4733 -> 2476,4728), so world
-            // coordinates shifted by 5 tiles = 1280 texels on each axis.
-            // This is the same patch of coast as before, renumbered.
-            start: { x: 1710, y: 2176, altitudeMetres: 500, yaw: 0, pitch: -0.04 },
-            // Atacama air is exceptionally clear; the 2010 map's haze
-            // was tuned for a much smaller world.
-            // Caldera is at latitude -27: the sun is in the NORTH.
-            // A bearing of 330 gives raking afternoon light from the
-            // north-west, which is what this coast actually sees.
-            defaults: { fogDensity: 0.0006, sunAzimuth: 330, sunElevation: 40 },
-            // 15 km, so retro's hard horizon lands beyond the bay rather
-            // than cutting a visible circle out of the open sea.
-            retroDistance: 900,
-        }),
     };
+    // No terrain is baked any more: every real-world dataset, Caldera
+    // included, is fetched from the tileset at runtime. The 2010 map
+    // stays because it is not tiled terrain -- it is the demo this port
+    // came from.
 
     // Build a world anywhere, from tiles fetched at runtime. The baked
     // Caldera mosaic stays the default and the offline path stays
@@ -226,7 +270,9 @@ async function main() {
     // than a single shared 'live' matters: ui.sync() writes
     // settings.terrain back into the select, so a preset filed as 'live'
     // would jump the menu back to the generic entry on the next sync.
-    async function flyTo(key, { lat, lon, tiles, zoom, label, vs, yaw }) {
+    async function flyTo(key, {
+        lat, lon, tiles, zoom, label, vs, yaw, alt, pitch,
+    }) {
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
         say(`Fetching terrain for ${lat.toFixed(4)}, ${lon.toFixed(4)}…`, 0);
         let got;
@@ -246,8 +292,19 @@ async function main() {
             name: key, image: got.canvas, encoding: 'terrarium',
             meta: got.meta, wrap: false, procedural: true,
             start: {
-                x: got.meta.size / 2, y: got.meta.size / 2,
-                altitudeMetres: 900, yaw: yaw || 0, pitch: -0.10,
+                // Where the coordinates actually are, not where the tile
+                // grid rounds them to. fetchTerrain centres the window on
+                // the tile CONTAINING the point, so size/2 is that tile's
+                // north-west corner -- up to a whole tile away, 8.2 km at
+                // z12. That was invisible while every preset was a broad
+                // landscape and is not invisible at all on a coastline,
+                // where 8 km is the difference between open water and
+                // halfway up a hill. The offset is a fraction of a tile,
+                // so the camera still starts well inside the keep box.
+                ...texelOf(lat, lon, got.meta),
+                altitudeMetres: alt || 900,
+                yaw: yaw || 0,
+                pitch: pitch === undefined ? -0.10 : pitch,
             },
             // The sun is in the south from the northern hemisphere and in
             // the north from the southern one, so a bearing tuned for
@@ -281,7 +338,137 @@ async function main() {
             : `Terrain ready — ${(t.size * t.metresPerTexel / 1000).toFixed(1)} km across`);
     }
 
-    let current = terrains[settings.terrain] || terrains.caldera;
+    // The terrain window follows the camera, so the world is unbounded
+    // rather than a fetched rectangle. Two things can trigger a move: the
+    // camera leaving the middle half of the current window, or the speed
+    // asking for a different zoom.
+    //
+    // Zoom from speed is what makes this tractable, and it replaces a
+    // coarse fallback layer rather than complementing it: at speed the
+    // window IS coarse and wide enough to reach the horizon, so there is
+    // only ever one terrain layer. See GLOBAL-FLIGHT.md.
+    let windowBusy = false;
+    async function moveWindow() {
+        const t = current;
+        if (windowBusy || !t.procedural || !t.meta) return;
+        const tiles = settings.liveTiles;
+        // Roam governs automatic moves. Resizing the window is not one --
+        // it is something the user just asked for -- so it goes through
+        // even with streaming switched off.
+        if (tiles === t.meta.tiles && !settings.roam) return;
+        const here = t.latLon(camera.x, camera.y);
+        const speedMps = camera.speed * t.metresPerTexel;
+        // A resize cannot be done in place -- the mosaic is one texture
+        // and the tile origin shifts -- so it goes through the same
+        // fetch-and-rebase path as any other move. rebase() works off the
+        // global slippy grid, so it does not care that the window changed
+        // shape as well as position.
+        const sizeMove = tiles !== t.meta.tiles;
+        // The draw distance that will be in force AFTER this move, not the
+        // one in force now. On a resize the two differ: the setting still
+        // holds the outgoing window's value, because it is re-derived in
+        // selectTerrain once the new window exists. Feeding the stale one
+        // in made a 12x12 -> 4x4 switch measure a 4-tile window against a
+        // 1200-texel view, decide it could not hold one, and drop to z10 --
+        // which multiplies reliefScale by four and renders the mountains
+        // four times too tall. Worse, it ratcheted: coming back from 4x4
+        // landed on z11, not z12.
+        const drawTexels = sizeMove ? tiles * DRAW_PER_TILE : settings.drawDistance;
+        const want = windowZoom({
+            speed: speedMps, lat: here.lat, tiles,
+            maxZoom: settings.liveZoom,
+            // The old floor was a flat 20 km, which never bound at twelve
+            // tiles and bound hard at two -- a 17 km window would have
+            // been dragged a zoom level coarser the moment it moved. Tie
+            // it to what is actually being drawn instead: a window should
+            // hold at least twice the view, whatever size it is.
+            minCoverage: drawTexels * t.metresPerTexel * 2,
+        });
+        // Hysteresis on the zoom, and the smoothed speed underneath it,
+        // so a tapped boost key cannot launch a 144-tile fetch.
+        //
+        // Locked, none of that runs: the window stays at liveZoom however
+        // fast the camera moves. Zoom-from-speed was built to hold the
+        // window at a fixed time to cross, and it does -- but zoom also
+        // sets reliefScale, so every level it shed changed how tall the
+        // world looked. Holding it still is the trade: the terrain keeps
+        // one scale and one sharpness, and pays for it in refetch rate
+        // once the speed is high enough to cross a window inside a
+        // minute (about 1.7 km/s at twelve tiles, z12).
+        const zoomMove = !settings.lockZoom
+                      && Math.abs(want.zoomF - t.meta.zoom) > 1.0
+                      && want.zoom !== t.meta.zoom;
+        if (!zoomMove && !sizeMove
+            && !needsMove(camera.x, camera.y, t.meta.size)) return;
+
+        windowBusy = true;
+        // A resize centres on the camera; only a move leads ahead of it.
+        const [cx, cy] = sizeMove
+            ? [camera.x, camera.y]
+            : nextCentre(camera.x, camera.y,
+                         camera.vel[0], camera.vel[1], t.meta.size);
+        const centre = t.latLon(cx, cy);
+        const zoom = zoomMove ? want.zoom : t.meta.zoom;
+        let got;
+        try {
+            got = await fetchTerrain({
+                lat: centre.lat, lon: centre.lon, zoom, tiles,
+            });
+        } catch (err) {
+            windowBusy = false;
+            return;
+        }
+        // The old window has been rendering throughout; swap only now.
+        const key = t.name;
+        const next = makeTerrain(gl, {
+            name: key, image: got.canvas, encoding: 'terrarium',
+            meta: got.meta, wrap: false, procedural: true,
+            start: t.start, defaults: t.defaults,
+            retroDistance: t.retroDistance,
+        });
+
+        // Rebase. World texels sit on a global slippy grid, so this is
+        // affine, not a translation: across a zoom change a texel changes
+        // size and everything measured in texels changes with it. A
+        // same-zoom move has k = 1 and identical overlapping tiles, so
+        // the ground does not shift at all.
+        //
+        // Horizontally, that is. The vertical axis does NOT scale with
+        // zoom, and it is reliefScale that makes it so: a height in
+        // rendered texels is metres/mpp * 2^(13 - zoom), and mpp goes as
+        // 2^-zoom, so the two cancel exactly -- a 1000 m peak is 58.8
+        // texels at z13, z12, z11, z9, every level. That invariance is
+        // the whole point of reliefScale, and scaling z by k as well
+        // broke it from the other side: the terrain kept its height
+        // while the camera was pulled down to half its clearance on
+        // every zoom-out. 500 m over a peak became 250, then 125, then
+        // 63 -- which looks exactly like the vertical scale drifting off
+        // 1.0 each time a new window loads.
+        const k = scaleBetween(t.meta, got.meta);
+        const [nx, ny] = rebase([camera.x, camera.y], t.meta, got.meta);
+        camera.x = nx; camera.y = ny;
+        camera.vel[0] *= k;
+        camera.vel[1] *= k;
+        camera.speed *= k;
+
+        gl.deleteTexture(t.heightTex);
+        // The outgoing mosaic is handed to the incoming one rather than
+        // dropped: the overlap is a whole number of pixels, so it copies
+        // across exactly and the world never blanks. Only then is it
+        // freed -- the copy is synchronous inside loadImagery.
+        const oldIm = imageryCache[key];
+        delete imageryCache[key];
+        imagerySeed = oldIm;
+        terrains[key] = next;
+        selectTerrain(key, true);      // keep the pose we just rebased
+        imagerySeed = null;
+        if (oldIm) gl.deleteTexture(oldIm.texture);
+        windowBusy = false;
+    }
+
+    // Something must be current before the first fetch lands; the 2010
+    // map is the only dataset that exists without a network round trip.
+    let current = terrains[settings.terrain] || terrains.original;
 
     // Ground height in the engine's texel units, vertical exaggeration
     // included. Outside a finite dataset there is open sea.
@@ -297,7 +484,7 @@ async function main() {
             u = Math.floor(x);
             v = Math.floor(y);
         }
-        const scale = t.procedural ? settings.vertScale : 1;
+        const scale = t.procedural ? settings.vertScale * t.reliefScale : 1;
         return t.heights[v * size + u] * scale;
     };
 
@@ -322,9 +509,9 @@ async function main() {
                 const pl = PLACES[+m[1]];
                 flyTo(settings.terrain, {
                     lat: pl.lat, lon: pl.lon,
-                    tiles: pl.tiles || settings.liveTiles,
+                    tiles: settings.liveTiles,
                     zoom: pl.zoom || settings.liveZoom,
-                    label: pl.name, vs: pl.vs, yaw: pl.yaw,
+                    label: pl.name, vs: pl.vs, yaw: pl.yaw, alt: pl.alt, pitch: pl.pitch,
                 });
             } else {
                 if (m) settings.vertScale = PLACES[+m[1]].vs || settings.vertScale;
@@ -332,6 +519,11 @@ async function main() {
                 if (m) ui.sync();
             }
         }
+        if (key === 'liveTiles') moveWindow();
+        // Both ladders move at once, so both need waking: the rings
+        // re-target on the next frame, and the window is re-examined
+        // in case unlocking has left it at a level speed no longer wants.
+        if (key === 'lockZoom') { for (const d of detail) d.invalidate(); moveWindow(); }
         if (key === 'imagery') ensureImagery();
         if (key === 'detailDistance') for (const d of detail) d.invalidate();
     });
@@ -341,6 +533,9 @@ async function main() {
     // fetching is the ordinary usage pattern where baking a mosaic into
     // the repository would be redistribution.
     const imageryCache = {};
+    // Set for the duration of one selectTerrain call, so a window move
+    // can hand the outgoing mosaic to the incoming one.
+    let imagerySeed = null;
     let detail = [];            // clipmap rings, real data only
     let detailInfo = [null, null];   // published rectangles, for the readout
 
@@ -363,13 +558,19 @@ async function main() {
         const step = touchMode ? 0 : 1;
         const zoom = t.meta.tiles * 256 * 2 ** step <= 4096
             ? t.meta.zoom + step : t.meta.zoom;
-        const im = loadImagery(gl, t.meta, {
-            zoom,
+        let im;
+        im = loadImagery(gl, t.meta, {
+            zoom, seed: imagerySeed,
             onProgress: (done, total, failed) => {
                 if (done < total) { say(`Loading imagery ${done}/${total}…`, 0); return; }
+                if (im && im.carried) {
+                    say(`Imagery — ${im.carried} tiles carried over, ${total} fetched`);
+                    return;
+                }
+                const mpx = t.metresPerTexel / 2 ** (zoom - t.meta.zoom);
                 say(failed
                     ? `Imagery loaded — ${failed} of ${total} tiles missing`
-                    : `Imagery loaded — ${zoom === t.meta.zoom ? '17' : '8.5'} m/px`);
+                    : `Imagery loaded — ${mpx.toFixed(1)} m/px`);
             },
         });
         imageryCache[t.name] = im;
@@ -419,7 +620,7 @@ async function main() {
     }
 
     function selectTerrain(name, keepPose = false) {
-        current = terrains[name] || terrains.caldera;
+        current = terrains[name] || terrains.original;
         settings.wrapWorld = current.wrap;
         settings.worldSize = current.size;
         renderer.useTerrain(current);
@@ -427,6 +628,15 @@ async function main() {
         ui.setRetroDistance(current.retroDistance, pinned.has('drawDistance'));
         renderer.setImagery(imageryCache[current.name] || null);
         ensureImagery();
+        // Ahead of the keepPose bail: a window resize deliberately keeps
+        // the pose, and is exactly the case where the draw distance has
+        // to move with it.
+        if (current.procedural && current.meta
+            && current.size !== drawDerivedFor) {
+            drawDerivedFor = current.size;
+            ui.setWindowDistance(current.meta.tiles * DRAW_PER_TILE,
+                                 pinned.has('drawDistance'));
+        }
         if (keepPose) return;
         for (const [k, v] of Object.entries(current.defaults)) {
             if (!pinned.has(k)) settings[k] = v;
@@ -434,11 +644,25 @@ async function main() {
         ui.sync();
         const s = current.start;
         const clearance = s.altitudeMetres !== undefined
-            ? s.altitudeMetres / current.metresPerTexel * settings.vertScale
+            ? s.altitudeMetres / current.metresPerTexel
+              * settings.vertScale * current.reliefScale
             : s.altitude;
         camera.place(s.x, s.y, clearance, s.yaw, s.pitch);
     }
-    selectTerrain(settings.terrain);
+    // A preset selected at boot has to be fetched before it can be shown.
+    const bootPlace = /^place:(\d+)$/.exec(settings.terrain);
+    if (bootPlace && PLACES[+bootPlace[1]]) {
+        selectTerrain('original');
+        const pl = PLACES[+bootPlace[1]];
+        flyTo(settings.terrain, {
+            lat: pl.lat, lon: pl.lon,
+            tiles: settings.liveTiles,
+            zoom: pl.zoom || settings.liveZoom,
+            label: pl.name, vs: pl.vs, yaw: pl.yaw, alt: pl.alt, pitch: pl.pitch,
+        });
+    } else {
+        selectTerrain(settings.terrain);
+    }
     applyQueryPose(camera);
 
     // The preset menu. Each entry is a dataset key of its own, so
@@ -482,7 +706,7 @@ async function main() {
             document.getElementById('terrain').value = `place:${i}`;
             flyTo(`place:${i}`, {
                 lat: pl.lat, lon: pl.lon,
-                tiles: pl.tiles || settings.liveTiles,
+                tiles: settings.liveTiles,
                 zoom: pl.zoom || settings.liveZoom,
                 label: pl.name, vs: pl.vs, yaw: pl.yaw,
             });
@@ -547,6 +771,7 @@ async function main() {
 
     notify = say;
 
+    let lastRoamCheck = 0;
     let last = performance.now();
     let fps = 0, frames = 0, fpsClock = last;
 
@@ -559,6 +784,11 @@ async function main() {
         if (tilt) tilt.contribute(intent);
 
         renderer.resize(settings.renderScale);
+        // The camera needs the dataset's scale to turn a speed in metres
+        // into one in texels; datasets without a real scale keep the
+        // 2010 constants.
+        settings.metresPerTexel = current.procedural ? current.metresPerTexel : null;
+        settings.speedMps = 10 ** settings.speedLog;
         camera.update(dt, intent, settings);
 
         // Detail LOD is driven by how far away the terrain being looked
@@ -586,6 +816,8 @@ async function main() {
                 fovY: settings.fov * Math.PI / 180,
                 screenPx: canvas.height,
                 thresholdM: settings.detailDistance * 1000,
+                speedMps: camera.speed * (current.metresPerTexel || 1),
+                lockZoom: settings.lockZoom,
             };
             for (const d of detail) d.update(state);
         }
@@ -595,7 +827,12 @@ async function main() {
         // scaled the same way altitude is.
         const w = windOffsets(now / 1000, settings.wind);
         const mpt = current.metresPerTexel || 1;
-        const vs = current.procedural ? settings.vertScale : 1;
+        const vs = current.procedural ? settings.vertScale * current.reliefScale : 1;
+        // Checked a few times a second, not every frame: it is a
+        // predicate over smoothed speed and position, and it starts
+        // network work.
+        if (now - lastRoamCheck > 400) { lastRoamCheck = now; moveWindow(); }
+
         renderer.draw(camera, settings, camera.viewBasis(w && {
             yaw: w.yaw, pitch: w.pitch, roll: w.roll,
             sway: w.sway / mpt,

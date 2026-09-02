@@ -30,7 +30,7 @@ uniform sampler2D uTexture;   // terrain colour, original palette
 uniform sampler2D uSky;       // 512x128 panorama strip
 uniform sampler2D uImagery;   // satellite imagery, same extent as height
 uniform sampler2D uDetail;    // finest ring, following the camera
-uniform sampler2D uDetail2;   // one level coarser, twice the span
+uniform sampler2D uDetail2;   // two levels coarser, four times the span
 
 uniform vec3  uCamPos;        // world x, y, altitude
 uniform vec3  uFwd;

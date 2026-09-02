@@ -107,7 +107,8 @@ export class Renderer {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, t.heightTex);
 
-        const vertScale = t.procedural ? settings.vertScale : 1.0;
+        const vertScale = t.procedural
+            ? settings.vertScale * (t.reliefScale || 1) : 1.0;
         gl.uniform1f(this.u.uWorldSize, t.size);
         gl.uniform1f(this.u.uVertScale, vertScale);
         gl.uniform1i(this.u.uWrap, t.wrap ? 1 : 0);

@@ -35,8 +35,34 @@ only -- your position and heading are untouched, so it never blows you
 off course and never disturbs the imagery level of detail. At 0 it is
 skipped entirely.
 
-The sun is set by compass bearing (0 = north, 90 = east). Caldera sits at
-latitude -27, so its light comes from the north.
+**Roam** streams the terrain window as you fly, so the world is
+unbounded rather than a fetched rectangle. Turn it off to stay in one
+window. With **Lock zoom** off, the window's zoom follows your speed and
+is always sized to take about a minute to cross, so fetching keeps up at
+any speed: z13 over 60 km flying slowly, z11 over 235 km at 2 km/s. With
+it on — the default — the window holds its zoom and the speed ceiling
+does that job instead.
+
+**Speed** sets the cruise, in metres per second on real terrain: 30 m/s
+is a brisk drone, and it is what you move at with no key held. Hold
+forward and the camera winds up — hard below the speed of sound, then
+more gradually above it:
+
+| held for | speed |
+|---|---|
+| 1.9 s | Mach 1 |
+| 4.4 s | Mach 2 |
+| 7.6 s | Mach 5 |
+| 10 s | **Mach 10** — the ceiling |
+
+Shift boosts by four and reaches the ceiling in about 5 s, but does not
+raise it: Mach 10 is the top speed, not a number the boost key walks
+past. Let go and the wind-up decays in a second and a half. The 2010 map
+keeps its original texel-relative speed and its old single-phase ramp,
+since its metres are arbitrary and it has no Mach to speak of.
+
+The sun is set by compass bearing (0 = north, 90 = east). The default
+view sits at latitude -33, so its light comes from the north.
 | `H` | hide the settings panel |
 
 On a touch device the page switches to a movement joystick plus
@@ -53,16 +79,24 @@ HTTPS or a tunnel to try it on a real phone.
 
 ## Terrain
 
-Two datasets, switchable in the panel.
+Two kinds of dataset, switchable in the panel: sixteen real-world
+presets fetched from the tileset, and the synthetic 2010 map.
 
-**Caldera, Atacama** (default) is real elevation, 30.5 km of the
-Chilean coast around Caldera at 17 m per texel, sea level to 952 m.
-Position is reported as real latitude, longitude and altitude in metres.
-Regenerate it, or fetch anywhere else, with:
+**Viña del Mar, Chile** (default) opens on Valparaíso Bay: 69 m of water
+under the camera, the curve of the coast ahead, the city on the flat and
+the hills behind it climbing to 300 m in six kilometres. It is fetched
+from the tileset when the page loads like every other place. Position is
+reported as real latitude, longitude and altitude in metres. Nothing is
+baked: pick another preset, type a lat/lon, or pass `?lat=&lon=&tz=`.
 
-    python3 tools/fetch-terrain.py --lat -27.0678 --lon -70.8231 --zoom 13
+Preset coordinates place the camera exactly. They used to be rounded to
+the containing tile's north-west corner -- up to 8.2 km at z12, which is
+invisible over a broad landscape and very visible on a coastline, where
+it is the difference between open water and halfway up a hill.
 
-Zoom 13 is deliberate. Measured against a bilinear upsample of the level
+Zoom 12 is the default window and the finest the roamer will pick;
+`?tz=` moves it, and `windowZoom` clamps to the range z4-z13. Zoom 13 is
+where the data stops. Measured against a bilinear upsample of the level
 above it, z13 adds ~5 m RMS of genuine detail here while z14 adds
 0.1-0.4 m -- nothing. The underlying source is SRTM. Regions covered by
 national lidar (the US, via 3DEP) keep gaining real detail to z14-15, so
@@ -70,34 +104,144 @@ the useful ceiling is a property of the region, not of the tileset.
 
 Real terrain is much gentler than the synthetic map -- 957 m of relief
 over 30 km is 56 texels at true scale, against the 2010 map's 249 -- so
-a **vertical scale** control exaggerates it. The default is 3x. Heights
-are held in a float texture, so there is no 0-255 ceiling to clip
-against.
+a **vertical scale** control exaggerates it. The slider defaults to
+1.0x. Heights are held in a float texture, so there is no 0-255 ceiling
+to clip against.
+
+The slider is not the whole exaggeration, though. Relief measured in
+texels vanishes as the window zooms out -- a texel is 17 m at z13 but
+2.4 km at z6, which would leave Everest three texels tall in a
+3000-texel world and render the planet as a plate -- so the engine also
+applies `2^(13 - zoom)`, holding relief-in-texels constant across window
+zooms. Total exaggeration is the slider times that, so the default 1.0x
+is 2x over a z12 window and 1x over a z13 one, and the slider keeps
+meaning "how exaggerated" rather than "how exaggerated at z13". The
+consequence worth knowing: **anything that changes the window's zoom
+changes how tall the mountains look**, which is why the window-size
+control is careful not to.
+
+Put the other way round, rendered height is *zoom-invariant*: a 1000 m
+peak is 58.78 texels tall at z13, z12, z11 and z6 alike, because
+`metres / mpp` and `2^(13 - zoom)` cancel. That is what the exaggeration
+buys, and it is why a window move rebases horizontally only -- the
+camera's height above the ground is in units the zoom does not touch.
 
 **Satellite imagery** drapes Esri World Imagery over the elevation.
 Esri's tiles use the same Web Mercator grid as the terrain tiles, so
 they register pixel-for-pixel with no reprojection -- measured alignment
 against the elevation-derived coastline is dx=0, dy=0. Because the grids
-nest, the imagery is taken one zoom finer than the terrain: z14, 8.5 m
-per pixel over 17 m terrain, a 3584px mosaic of 196 tiles (~1.3 MB).
-Touch devices stay at z13 to keep the texture a quarter of the size.
-Turn it off and the hypsometric elevation colouring comes back.
+nest, the imagery would like to be one zoom finer than the terrain.
 
-Detail is not capped at that, though. A second, smaller imagery texture
-follows the camera at a zoom picked from **how far away the terrain being
-looked at is** -- not from altitude, which is only the same thing when
-the camera points straight down -- cross-fading into the base at its
-edges and with distance. Fly low and roads and tracks
-resolve; climb and it steps back down, then switches off once the base
-is enough. The panel reports the level in use.
+Whether it gets to be depends on the window, and over the default window
+it does not. The mosaic spans the whole terrain extent, so its side is
+`tiles * 256 * 2^step` pixels, and that is capped at 4096. At twelve
+tiles the finer step would need 6144 px, so it is refused and the base
+falls back to the terrain's own zoom -- **z12, 32 m/px**. Eight tiles or
+fewer fit, and get z13 at 16 m/px. Touch devices always stay at the
+terrain's zoom.
 
-**Detail switch** sets the distance at which the finest level gives way
-to the next one down; every band below and above it follows by halving
-and doubling. Set it to 2.2 km and anything you look at inside 2.2 km
-gets z17, out to 4.4 km z16, and so on. The screen-derived figure (shown
-as `auto`) is where finer imagery stops being *resolvable*, which is not
-the same as where it stops being *worth fetching* -- so the slider
-defaults to 2.2 km, well past it.
+That 32 m/px base is why there are two detail rings rather than one; see
+**Lock zoom** below. Turn imagery off and the hypsometric elevation
+colouring comes back.
+
+Detail is not capped at that. Two smaller imagery textures follow the
+camera, cross-fading into the base at their edges and into each other
+where they overlap, finest last. The panel reports both:
+
+    inner z17 - 1.00 m/px -  2.6 km wide
+    outer z15 - 4.01 m/px - 10.3 km wide
+
+With **Lock zoom** on, which is the default, those levels are fixed. Off,
+they are picked from **how far away the terrain being looked at is** --
+not from altitude, which is only the same thing when the camera points
+straight down -- and step down as you climb, switching off once the base
+is enough.
+
+**Detail switch** is the knob for that unlocked mode: the distance at
+which the finest level gives way to the next, with every band below and
+above following by halving and doubling. Set it to 2.2 km and anything
+inside 2.2 km gets z17, out to 4.4 km z16, and so on. The screen-derived
+figure (shown as `auto`) is where finer imagery stops being *resolvable*,
+which is not the same as where it stops being *worth fetching*, so the
+slider defaults to 2.2 km, well past it. **Locked, this slider does
+nothing** -- the readout replaces it with the lock's own reach.
+
+**Window** chooses how many tiles a terrain window is cut from, from
+2x2 to 12x12. It is the one control with no right answer, because the
+tile budget buys either reach or resolution and never both. At the
+default latitude, z12:
+
+| | 12x12 | 4x4 |
+|---|---|---|
+| world | 98 km wide | 33 km wide |
+| horizon | 38 km | 13 km |
+| height texture | 18 MB | 2 MB |
+| tiles at load | 144 + 144 | 16 + 64 |
+
+plus 200 tiles of detail rings either way, since those follow the camera
+rather than the window. Smaller windows are refetched more often but
+move far less data per kilometre flown.
+
+Two things about that list are not monotonic, and are labelled in it:
+
+* **8x8 gives a sharper picture than 10x10.** The satellite base mosaic
+  gets a free zoom step while `tiles * 512` still fits in a 4096 px
+  texture, so 8 tiles and below get a 16 m/px base while 10 and 12 fall
+  back to the terrain's own zoom at 32 m/px.
+* **2x2 is a curiosity, not a setting.** It loads in 20 tiles, but the
+  horizon is 6.4 km and the whole world is 16 km across -- less than the
+  outer detail ring wants to cover.
+
+Changing it refetches through the same path a window move uses, so you
+keep your position and your velocity; it does not fly you back to the
+start, and it does not change the zoom -- which matters more than it
+sounds, because zoom sets the vertical exaggeration (see below), so a
+window that quietly re-zoomed would quietly change how tall the
+mountains are. **Draw distance follows it** at 100 texels of view per tile
+(1200 at 12x12, exactly what it has always been), because draw distance
+is measured in texels: it survives a zoom change untouched, which is the
+point of it, and for the same reason cannot survive a resize untouched.
+Looking further than the window holds is not a rendering error -- outside
+it the ground reads as sea level, by design -- but it does surround the
+terrain with an ocean that is not there. Move the slider afterwards and
+your value stands until the window changes size again, or pin it with
+`?dist=`.
+
+**Lock zoom** holds both ladders still, and is on by default. The
+terrain window stays at its chosen zoom however fast you fly, and
+imagery detail stays at z17 however far you look. Nothing about the
+world's scale or sharpness changes under you.
+
+It is a trade, not a free win, and the readout names the price: `reach`.
+A 2560 px rectangle at z17 spans 2.7 km and serves to about 2.3 km, and
+past that there is no coarser ring to step down into -- that is what
+locking gives up. When the point you are looking at is beyond it, the
+readout says `looking past it`.
+
+Which is why there are **two rings**, not one: z17 for the near ground
+and z15 beneath it, four times the span at a quarter the sharpness.
+
+| ring | m/px | serves to |
+|---|---|---|
+| z17 | 1.00 | 2.3 km |
+| z15 | 4.01 | 9.1 km |
+| base mosaic | 32.05 | everywhere |
+
+The base is the number that makes the second ring necessary. Over a
+twelve-tile window the imagery's free zoom step is refused -- 12 x 256 x
+2 = 6144 exceeds the 4096 px cap -- so the base is the terrain's own
+zoom, 32 m/px. Without a middle ring the frame falls from 1 m/px to
+32 m/px in one step at 2.3 km, which does not read as lower resolution
+so much as melted. The z15 ring covers the band between, eight times
+finer than the base, for 100 tiles and 35 MB.
+
+The terrain half has a cost too, and it is refetch rate. Zoom-from-speed
+existed to hold the window at a fixed time to cross -- a minute -- which
+a 98 km window manages up to about 1.6 km/s. The top speed is Mach 10,
+3.43 km/s, so at full tilt a 12x12 window is crossed in 31 s and
+refetched every 15 s: twice the intended rate, comfortably servable, and
+the reason the speed ceiling and the locked zoom belong together. Below
+about Mach 5 it costs nothing at all. `?lock=0` restores the ladders.
 
 **Tile grid + 1 km rings** is a debug overlay: alternate imagery tiles
 are tinted, so tile size against distance is visible and the detail
@@ -107,17 +251,18 @@ to pin it.
 
 The slider runs to 8 km, and its upper end means *the finest level whose
 rectangle can cover what you are looking at*: the rectangle is finite,
-reaching 2.42 km at z17, 4.85 km at z16 and 9.69 km at z15 (half that on
-touch). When reach rather than the slider decides, the readout says
-`rect-limited`.
+reaching 2.28 km at z17, 4.56 km at z16 and 9.13 km at z15 over a z12
+window (half that on touch, where the rectangle is 1280 px). When reach
+rather than the slider decides, the readout says `rect-limited`.
 
 Note that **vertical scale moves the levels**. Heights are exaggerated
-but horizontal distance is not, so at the default 2.5x a camera reading
-500 m is looking 5.5 km at real ground when it looks near-level -- far
-enough that the base mosaic is already as fine as the screen resolves.
-z17 arrives from about 28 degrees down at 2.5x, 38 degrees at 3x, and
-straight away at 1x, where a readout of 500 m means the camera really is
-500 m up in the geometry the rays march. Fly lower, look down, or turn
+but horizontal distance is not, so a camera reading 500 m over a z12
+window sits 31 texels up -- the slider's 1.0 times reliefScale's 2 --
+and looks at ground correspondingly further away than its metric
+altitude implies.
+With the ladder locked this no longer gates anything -- z17 is loaded
+whatever the pose -- but unlocked, a higher exaggeration pushes the
+finest level further down the pitch range. Fly lower, look down, or turn
 the exaggeration down.
 
 Three bugs used to hide all of this. The shader faded the detail layer
@@ -133,8 +278,10 @@ How far it can go depends on the region. Beyond its high-resolution
 coverage Esri serves a flat grey "Map data not yet available"
 placeholder rather than an error, so the demo probes one tile before
 loading a level and walks the ceiling down until it finds real imagery.
-At Caldera that ceiling is **z17, 1.06 m/px**; z18 and up are
-placeholders.
+Over Viña del Mar that ceiling is **z17, 1.00 m/px**; z18 and up are
+placeholders. It is also what the locked ladder aims at, and the lock
+respects it: `min(maxZoom, 17)`, so a region that tops out lower gets its
+own ceiling rather than a rectangle of grey.
 
 The imagery is fetched **at runtime**, not shipped in `assets/`. The
 terrain tiles are open data; Esri's imagery is not -- it is licensed
@@ -149,7 +296,7 @@ Elevation data: Tilezen terrain tiles via AWS Open Data, no API key
 required. Imagery: Esri, Maxar, Earthstar Geographics and the GIS User
 Community. Attribution for both is required and is shown in the panel;
 see
-`assets/terrain-*.json` and
+`TERRAIN_ATTRIBUTION` in `src/terrain-tiles.js` and
 <https://github.com/tilezen/joerd/blob/master/docs/attribution.md>.
 
 ## The two modes
@@ -197,9 +344,22 @@ The original wrapped the world at `heightmap->w - 1` = 1791. The
 heightmap actually tiles seamlessly at 1792, so that left a
 one-column seam. Not reproduced.
 
-`?x=&y=&z=&yaw=&pitch=&retro=&scale=&steps=&dist=&detail=&grid=&wind=&fov=&touch=&terrain=&vs=&hud=`
-pin the camera and render settings from the URL, which is what makes
-screenshots reproducible. `hud=0` strips the overlay.
+Everything the panel does can be pinned from the URL, which is what
+makes screenshots reproducible. Anything pinned here is left alone
+afterwards, so a dataset's own defaults cannot overwrite it.
+
+| | |
+|---|---|
+| pose | `x` `y` `z` `yaw` `pitch` |
+| where | `terrain` (`original`, `place:N`), `place` (index or name), `lat` `lon` |
+| window | `tiles` (2-12), `tz` (terrain zoom), `roam=0`, `lock=0` |
+| imagery | `imagery=0`, `detail` (km), `grid=1` |
+| render | `scale` `steps` `dist` `fov` `fog` `vs` `retro` `follow=0` |
+| motion | `speed` (m/s), `wind` |
+| shell | `touch=0/1`, `panel`, `hud=0` |
+
+`hud=0` strips the overlay, `touch=0` forces the desktop UI on a machine
+that reports a touchscreen, and `lock=0` restores the zoom ladders.
 
 ## Layout
 
@@ -212,6 +372,11 @@ screenshots reproducible. `hud=0` strips the overlay.
     src/tilt.js             device-orientation look
     src/ui.js               settings panel
     src/gl.js               shader/texture helpers
+    src/imagery.js          base mosaic and the two detail rings
+    src/terrain-tiles.js    terrarium tiles -> a height mosaic
+    src/terrain-window.js   window coordinate maths, pure, no GL or DOM
+    src/places.js           the preset locations
+    src/wind.js             drone-like view drift
     src/shaders/            the ray march
-    tools/convert-assets.py BMP -> PNG
-    tools/fetch-terrain.py  real elevation tiles -> mosaic + metadata
+    tools/convert-assets.py BMP -> PNG (the 2010 assets, one-time)
+    tools/test-window.mjs   window coordinate maths, runs in node

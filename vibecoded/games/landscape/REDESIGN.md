@@ -1137,6 +1137,14 @@ screenshots reproducible:
 | `detail` | imagery detail switch distance, km |
 | `wind` | camera drift strength, 0 to 1 |
 | `hud` | `0` strips the overlay, for clean screenshots |
+| `grid` | `0`/`1` tile-grid and range-ring debug overlay |
+| `roam` | `0`/`1` stream the terrain window while flying |
+| `lock` | `0`/`1` hold the terrain and imagery zoom ladders still |
+| `tiles` | terrain window size, 2 to 12 tiles per side |
+| `tz` | terrain zoom, the window's ceiling |
+| `speed` | cruise speed, m/s |
+| `place` | preset index, or any part of a preset's name |
+| `lat`, `lon` | fly to coordinates |
 
 Anything set here is **pinned**: datasets carry their own defaults for
 fog, draw distance and sun position, applied when the dataset is
@@ -1155,8 +1163,19 @@ index.html?x=760&y=980&z=140&yaw=1.1&pitch=-0.05&scale=0.4&steps=128
 
 ## 16. Verification
 
-There is no meaningful unit-test surface here; most of it is verified by
-looking at it. The checks that do exist:
+Most of this is verified by looking at it, but the coordinate maths is
+the part that cannot be: a camera that teleports, sinks, or quietly
+changes scale on a window swap looks like a dozen unrelated bugs. That
+part has real tests.
+
+0. **Window coordinate maths**, `node tools/test-window.mjs`. Pure
+   computation, no browser: rebase round-trips across shifts and zoom
+   changes (worst error 0.00e+0 m), zoom-from-speed against the design
+   table, the coverage-outlasts-`T_CROSS` invariant, placement
+   predicates, every selectable window size holding its zoom, and the
+   vertical axis being zoom-invariant. The last two were added only
+   after the bugs they describe had shipped, which is the honest
+   pattern: each test here exists because something went wrong first.
 
 1. **Asset round-trip.** `convert-assets.py` asserts the heightmap
    palette is a grayscale ramp and that both terrain PNGs decode back to
@@ -1221,6 +1240,35 @@ travel furthest and use the full step budget.
 **Real-hardware frame rates are unmeasured.** The only browser available
 during development was headless Chrome on SwiftShader.
 
+What is worth measuring, and how, if anyone profiles this properly. The
+costs concentrate in three places, none of which a generic profiling
+pass would naturally look at:
+
+- **GPU** is one fullscreen fragment shader with no geometry, so there
+  are no draw calls to count and no vertex cost. It is
+  `pixels x march steps` and nothing else: `renderScale` is quadratic in
+  it, `maxSteps` linear. `EXT_disjoint_timer_query_webgl2` gives a real
+  per-frame GPU time and is available.
+- **CPU** has one stall, `decodeHeights`, on every window load:
+  `getImageData` over the whole mosaic then a per-pixel loop, 9.4M
+  pixels at twelve tiles, on the main thread. The FPS readout cannot see
+  it -- it averages over 250 ms windows, which is exactly the timescale
+  that smears a stall into a slightly lower number. Frame-time
+  percentiles and `long-animation-frame` would.
+- **RAM** is mostly textures, and is not monotonic in window size: 8x8
+  costs more than 12x12, because the imagery base gets its free zoom
+  step at eight tiles and quadruples. The CPU-side `heights`
+  Float32Array is twice the height texture and invisible to any GPU
+  tool. `performance.memory` sees the JS heap only;
+  `measureUserAgentSpecificMemory` needs COOP/COEP headers that
+  `python3 -m http.server` does not send.
+
+Two metrics specific to this engine would be worth more than any general
+counter: **tiles resident against tiles visible**, which is the
+utilisation ratio and therefore the waste, and **time to first detail**,
+which is the number that would have caught the seeding bug in 20.5 as a
+measurement rather than by eye.
+
 ---
 
 ## 18. Deliberately not built
@@ -1257,13 +1305,25 @@ Conversions:
 
 ### 19.2 The data
 
-`tools/fetch-terrain.py` fetches a 7x7 mosaic of 256 px tiles -- 1792
-px, the same dimensions as the 2010 heightmap -- from
+`src/terrain-tiles.js` fetches an n x n mosaic of 256 px tiles from
 
     https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
 
-served by AWS Open Data with **no API key**. The default is Caldera,
-Atacama, at zoom 13: 30.5 km across, 17.02 m/texel, -5 m to 952 m.
+served by AWS Open Data with **no API key**, in the browser, at load and
+again whenever the window moves. Nothing is baked.
+
+There was an offline path -- a Python tool writing a mosaic PNG and a
+JSON sidecar into `assets/` -- and it is gone, along with the mosaic it
+produced. It was the right shape while the place was a build-time
+decision. Once any lat/lon can be fetched in a second or two, a baked
+copy of one of them is a second code path to keep correct for no gain.
+
+**One thing was lost with it**, and is worth restoring if isolated
+spikes ever show up in a region: the tool despiked SRTM voids, replacing
+pixels that stood clear of *every* neighbour with the neighbour median.
+Measured over Caldera at both 7x7 and 16x16 there were none, so the
+runtime path has never needed it -- but the runtime path now covers the
+whole world, and the whole world has not been checked.
 
 Zoom 13 is chosen from measurement, not assumption. Comparing each level
 against a bilinear upsample of the level above it:
@@ -1317,6 +1377,71 @@ window, so:
   edge texels smeared to the horizon;
 - `camera.js` only folds coordinates back into the first tile when
   `settings.wrapWorld` is set.
+
+Which means looking past the window is not a rendering error, and that
+is worth stating precisely, because it is easy to assume the opposite
+from the `CLAMP_TO_EDGE` on the texture. The clamp is a fallback the
+shader never reaches: `outside()` is tested first. What you get past the
+edge is a flat plane at sea level -- open ocean where `uHasSea`, bare
+zero-metre ground where it does not.
+
+That is benign enough to have hidden a coupling until the window size
+became a control. Draw distance is measured in texels so that it
+survives a zoom change untouched; for exactly that reason it does not
+survive a change of window *size*. 1200 texels is 39% of a twelve-tile
+window and wider than the whole of a four-tile one, so a 4x4 window at
+the old fixed 1200 would have drawn a small island of real terrain
+ringed by an ocean that is not there -- no artefacts, nothing obviously
+broken, just most of the frame invented. Hence `DRAW_PER_TILE = 100`:
+100 texels of view per tile of window, which is exactly 1200 at twelve
+tiles, so nothing about the historical default changes.
+
+And one more link in that chain, which only showed itself once the
+window size was a control someone could change while looking at the
+terrain. The zoom the window is fetched at is also what sets
+`reliefScale = 2^(13 - zoom)`, and that scale *is* the real-world
+vertical exaggeration -- it is deliberately not 1, because relief in
+texels would otherwise vanish as the window zooms out and the planet
+would render as a plate. So anything that quietly moves the zoom
+quietly moves how tall the mountains are.
+
+The coverage floor moved it. `minCoverage` is derived from the draw
+distance, the draw distance is derived from the tile count, and on a
+resize the setting still holds the *outgoing* window's value, because
+it is only re-derived in `selectTerrain` once the new window exists.
+Switching 12x12 -> 4x4 therefore measured a four-tile window against a
+1200-texel view, concluded it could not hold one, and dropped to z10 --
+`reliefScale` 2 to 8, every mountain four times too tall. It ratcheted,
+too: coming back from 4x4 landed on z11 rather than z12. The fix is to
+feed the floor the draw distance that will be in force *after* the move
+(`tiles * DRAW_PER_TILE` on a resize), which is the pairing the test in
+`tools/` had asserted all along -- the test was right and the caller was
+wrong, which is the only reason it passed while the demo was visibly
+broken.
+
+**The vertical axis does not scale with zoom, and that is deliberate.**
+`reliefScale = 2^(13 - zoom)` is usually described as keeping the planet
+from rendering as a plate, which it does, but the sharper statement is
+that it makes rendered height *zoom-invariant*: a height in texels is
+`metres / mpp * 2^(13 - zoom)`, `mpp` goes as `2^-zoom`, and the two
+cancel exactly. A 1000 m peak is 58.78 texels tall at z13, z12, z11, z9
+and z6 alike.
+
+So a window move must rebase horizontally only. It did not: alongside
+`x` and `y` it multiplied `z`, `clearance` and all three components of
+`vel` by `k`, treating the vertical axis as though it shared the
+horizontal one's units. The terrain kept its height while the camera was
+pulled down to half its clearance on every zoom-out -- 500 m over a peak
+became 250, then 125, then 63 -- and the symptom reads as the vertical
+scale drifting off whatever the slider says, every time a new heightmap
+loads. The fix is a removal: scale `x`, `y`, `vel[0]`, `vel[1]` and the
+smoothed horizontal `speed`, and leave the vertical alone.
+
+Both of the vertical-scale bugs in this section share a cause worth
+naming: zoom is not just a level of detail here. It sets `reliefScale`,
+which sets the exaggeration, so anything that moves the zoom moves how
+tall the world looks, and anything that rebases across a zoom change has
+to know which axes the zoom actually applies to.
 
 ### 19.5 The sea is a plane, not terrain
 
@@ -1411,11 +1536,29 @@ ground at 2^k the detail. Measured over the Caldera extent:
 | **z14** | **3584 px** | **196** | **1.3 MB** | **8.5 m/px** | **51 MB** |
 | z15 | 7168 px | 784 | ~5 MB | 4.25 m/px | 205 MB |
 
-z14 is the choice: four times the terrain's detail for 1.3 MB, and
+z14 was the choice: four times the terrain's detail for 1.3 MB, and
 3584 px stays inside `MAX_TEXTURE_SIZE` on mobile GPUs where 7168 px
-would not. Touch devices drop to z13, a quarter of the texture memory.
+would not. Touch devices drop a level, a quarter of the texture memory.
 World Imagery itself goes to z19, so there is far more available to a
 streaming implementation.
+
+**That table was computed for a baked 14-tile z13 window and no longer
+describes the default.** The rule survived as
+`tiles * 256 * 2^step <= 4096`, one free zoom step if the mosaic fits;
+what changed is the window under it. The terrain window is now twelve
+tiles at z12, so the finer step would need 6144 px, the cap refuses it,
+and the base falls back to the terrain's own zoom:
+
+| window | base zoom | mosaic | resolution |
+|---|---|---|---|
+| 4x4 | z13 | 2048 px | 16 m/px |
+| 8x8 | z13 | 4096 px | 16 m/px |
+| **12x12 (default)** | **z12** | **3072 px** | **32 m/px** |
+
+Which makes the base four times coarser than this section assumes, and
+is the whole reason §20.6 now runs two rings instead of one. It also
+makes window size non-monotonic for picture quality: 8x8 gets a sharper
+base than 10x10.
 
 ### 20.3 Loading
 
@@ -1456,9 +1599,14 @@ the horizon sky reflection is tightened.
 ### 20.5 The moving detail layer
 
 The base mosaic covers the whole extent at a fixed zoom, which caps
-detail at 8.5 m/px however low you fly. A second, much smaller texture
-follows the camera at a zoom chosen from altitude, and the shader
-prefers it wherever it applies.
+detail at that zoom's resolution however low you fly -- 8.5 m/px when
+this was written, 32 m/px over the default window today (20.2). Smaller
+textures follow the camera at finer zooms, and the shader prefers them
+wherever they apply, blending coarsest-first so the finest wins.
+
+Two of them, as built, and the zoom they sit at is fixed rather than
+chosen; both of those changed after this section was written and both
+are argued out below.
 
 **Where the imagery actually stops, and how that was got wrong.**
 The first attempt reused the elevation method -- compare each level
@@ -1550,13 +1698,38 @@ shape that most exposes the sides):
 | 150 m, pitch -2 | x1.02 | 2.0% | x1.04 / x1.06 |
 
 The edges do improve at low altitude, precisely where the geometry says
-they should. Four to six per cent over the outer sixths of the frame
-does not pay for double the tiles per refresh and another 52 MB of
-texture, so `RING_OFFSETS` in `main.js` is `[0]`.
+they should. Four to six per cent over the outer sixths of the frame did
+not pay for double the tiles per refresh and another 35 MB of texture,
+and the ring came out.
 
-The machinery stays: `DetailImagery` takes `unit` and `zoomOffset`, and
-the shader blends two rings coarsest-first, so adding `-1` turns it back
-on. The measurements above are the case that would have to change first.
+**Both premises then failed, and the ring is back at a different
+offset.** `RING_OFFSETS` is `[0, -2]`.
+
+- *"The sides are far away, where a screen pixel already covers more
+  than the base mosaic."* That assumed the 8.5 m/px base of §20.2. Over
+  a twelve-tile window there is no such base -- the free zoom step is
+  refused and the base is 32 m/px. There is a great deal of headroom.
+- *The experiment used `-1`.* A z16 ring reaches 4.56 km against z17's
+  2.28: it nested inside the ring above it and left the rest of the
+  frame untouched, which is why it measured x1.00. `-2` straddles the
+  gap instead of nesting inside it.
+
+Locking the zoom ladder made it worse again, because nothing steps down
+into the middle distance any more. The band from 2.3 km to the horizon
+was falling from 1 m/px to 32 m/px in a single step, which does not read
+as lower resolution so much as melted wax. As built, over a z12 window:
+
+| ring | offset | m/px | serves to |
+|---|---|---|---|
+| z17 | 0 | 1.00 | 2.28 km |
+| z15 | -2 | 4.01 | 9.13 km |
+| base | — | 32.05 | everywhere |
+
+The lesson is not "two rings good, one ring bad". It is that the value
+of a second ring is set entirely by **the gap between the finest ring
+and the base**, and both ends of that gap moved after the measurement
+was taken. A measurement retains its premises; this one was re-read
+years-of-changes later as though it were a standing conclusion.
 
 Three things that only showed up in the building, worth having written
 down before anyone rebuilds it:
@@ -1758,6 +1931,12 @@ about 28 degrees down; at 3x, 38 degrees. None of this is tunable away
 -- covering a 6.4 km look distance at z17 would need a 13 km rectangle,
 which is thousands of tiles.
 
+The exaggeration slider now defaults to 1x, and the zoom ladder is
+locked by default, so none of this gates the finest level any more: z17
+is loaded whatever the pose. The table remains the argument for why a
+single rectangle cannot cover the frame, which is what motivated the
+second ring.
+
 **Avoiding thrash.** The layer is refetched when the wanted zoom drifts
 more than 0.85 levels from the current one, or the camera leaves the
 middle 76% of the rectangle.
@@ -1815,6 +1994,26 @@ Two things this got wrong first time, both worth keeping in mind:
   back to publishing when complete. A finished-image test cannot catch
   this, because the tiles overwrite the seed; it was found by
   suppressing the tile pool so only the seed rendered.
+- **Gating the publish is not enough; the *start* has to be gated.**
+  `base.done || current` is evaluated once, when `load()` begins, and a
+  base that finishes a moment later never revisits it -- the ring stays
+  invisible until all hundred of its own tiles land, which is the dead
+  time the seed exists to remove. This hid behind the fixed twelve-tile
+  window: a 144-tile base had always finished by the time the ceiling
+  probe let a ring start, so the race was never lost. At four tiles the
+  base is 64 tiles and the page is quicker throughout, the ring wins the
+  race, and the seed is worthless. Measured at 4x4: no rectangle
+  published within a 45 s budget, against 0.1 s at 12x12 -- same target
+  zoom, same 100 tiles.
+
+  The fix is not to re-seed later, which would overwrite tiles that have
+  already landed, but to refuse to start a rectangle that cannot be
+  published on arrival: `if (!this.current && !this.baseSettled) return`.
+  Settled rather than done, so a base that fails releases the gate
+  instead of stalling the ring for the life of the window. Nothing is
+  lost by waiting -- the ring was invisible for exactly that interval
+  anyway -- and every window size now behaves like the twelve-tile one
+  always did.
 - **Both layers live on `DETAIL_UNIT`.** `seedTexture` binds the
   outgoing layer to sample it, which clobbers the binding of the
   incoming one, so the `generateMipmap` after it was rebuilding the

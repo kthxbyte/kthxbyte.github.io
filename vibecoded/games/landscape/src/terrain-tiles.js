@@ -1,13 +1,12 @@
 // Terrain fetched at runtime, so the world can be built anywhere rather
 // than only where a mosaic was baked.
 //
-// This is the same job tools/fetch-terrain.py does offline, in the
-// browser: take a latitude and longitude, pull an n x n block of
-// terrarium tiles around it, and hand back a mosaic plus the metadata
-// the rest of the engine expects. Unlike the satellite imagery, these
-// tiles are open data -- Tilezen via AWS Open Data, no key -- so they
-// may equally well be baked; the reason to fetch them live is that the
-// place stops being a build-time decision.
+// Take a latitude and longitude, pull an n x n block of terrarium tiles
+// around it, and hand back a mosaic plus the metadata the rest of the
+// engine expects. These tiles are open data -- Tilezen via AWS Open
+// Data, no key -- so unlike the satellite imagery they could equally be
+// baked. They are not: fetching them live is what stops the place being
+// a build-time decision, and there is no longer any offline path.
 
 const BUCKET = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
 const CONCURRENCY = 16;
@@ -99,10 +98,20 @@ export async function fetchTerrain({ lat, lon, zoom, tiles, onProgress }) {
     for (let j = 0; j < tiles; j++) {
         for (let i = 0; i < tiles; i++) jobs.push([i, j]);
     }
+    // Longitude wraps, latitude does not. At low zoom a window is wider
+    // than the tile grid -- 16 tiles span the planet at z4 -- so without
+    // this every tile past the antimeridian 404s and the world is half
+    // ocean.
+    const grid = 2 ** zoom;
+    const wrapX = (x) => ((x % grid) + grid) % grid;
+
     let done = 0, failed = 0;
     await pool(jobs, CONCURRENCY, async ([i, j]) => {
+        const ty = y0 + j;
+        if (ty < 0 || ty >= grid) { done++; return; }   // past a pole
         try {
-            const img = await loadTile(`${BUCKET}/${zoom}/${x0 + i}/${y0 + j}.png`);
+            const img = await loadTile(
+                `${BUCKET}/${zoom}/${wrapX(x0 + i)}/${ty}.png`);
             ctx.drawImage(img, i * 256, j * 256);
         } catch (err) {
             failed++;                       // left at sea level

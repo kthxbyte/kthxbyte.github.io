@@ -1,10 +1,10 @@
 // Binds the panel's plain HTML inputs to one settings object.
 
 export const DEFAULTS = {
-    terrain: 'caldera',
+    terrain: 'place:0',   // Vina del Mar, fetched like anywhere else
     imagery: true,
     detailDistance: 2.2,   // km; where imagery detail steps down a level
-    vertScale: 2.5,
+    vertScale: 1.0,
     retro: false,
     terrainFollow: true,
     renderScale: 1.0,
@@ -14,10 +14,23 @@ export const DEFAULTS = {
     sunElevation: 45,
     fov: 75,
     wind: 0.20,        // drone-like view drift, 0 disables it entirely
+    // Cruise speed, held as log10(metres per second) so one slider spans
+    // a drone and a missile without the useful end being a hair's width.
+    speedLog: Math.log10(30),
     maxSteps: 256,
     debugGrid: false,
+    roam: true,        // let the terrain window follow the camera
     liveTiles: 12,     // tiles per side when fetching terrain at runtime
-    liveZoom: 13,      // z13 is where SRTM stops adding real relief
+    // z12 by default. z13 is where SRTM stops adding real relief, but a
+    // level coarser doubles the ground a window covers for the same 144
+    // tiles, which buys continuity and load time against detail that is
+    // only visible when nearly stationary.
+    liveZoom: 12,
+    // Hold both ladders still: the terrain window stays at liveZoom
+    // whatever the speed, and imagery detail stays at LOCK_DETAIL_ZOOM
+    // whatever the distance. Costs reach and refetch rate; buys a world
+    // whose scale and sharpness never change under you.
+    lockZoom: true,
 };
 
 // Retro mode has no fog, so it needs a near horizon -- otherwise the
@@ -37,6 +50,10 @@ const FORMAT = {
     sunElevation: (v) => `${v}°`,
     fov: (v) => `${v}°`,
     wind: (v) => (v > 0 ? `${Math.round(v * 100)}%` : 'off'),
+    speedLog: (v) => {
+        const m = 10 ** v;
+        return m >= 1000 ? `${(m / 1000).toFixed(1)} km/s` : `${Math.round(m)} m/s`;
+    },
 };
 
 export class UI {
@@ -61,7 +78,8 @@ export class UI {
             });
         }
 
-        for (const key of ['retro', 'terrainFollow', 'imagery', 'debugGrid']) {
+        for (const key of ['retro', 'terrainFollow', 'imagery', 'debugGrid',
+                           'roam', 'lockZoom']) {
             const el = document.getElementById(key);
             el.checked = settings[key];
             el.addEventListener('change', () => {
@@ -77,6 +95,34 @@ export class UI {
             settings.terrain = sel.value;
             onChange('terrain');
         });
+
+        // How many tiles a terrain window is cut from. Exposed because the
+        // trade it makes -- reach against resolution, memory and load time
+        // against how often the world is refetched -- cannot be reasoned
+        // about in the abstract, only flown.
+        const tiles = document.getElementById('liveTiles');
+        tiles.value = settings.liveTiles;
+        tiles.addEventListener('change', () => {
+            settings.liveTiles = parseInt(tiles.value, 10);
+            onChange('liveTiles');
+        });
+    }
+
+    // The window's own draw distance. Draw distance is measured in
+    // texels, which is what lets it survive a zoom change untouched --
+    // but not a change of window size: 1200 texels is 39% of a 12-tile
+    // window and wider than the whole of a 4-tile one. The shader is not
+    // fooled -- heightAt returns sea level outside the window rather than
+    // smearing the border -- so the failure is not garbage but phantom
+    // ocean: a small island of real terrain ringed by a flat plane that
+    // is not there. Retro keeps its own per-dataset value.
+    setWindowDistance(d, pinned = false) {
+        if (pinned) return;
+        this.savedDrawDistance[false] = d;
+        if (!this.settings.retro) {
+            this.settings.drawDistance = d;
+            this.sync();
+        }
     }
 
     setRetroDistance(d, pinned = false) {
@@ -90,10 +136,34 @@ export class UI {
     // Vertical exaggeration only means anything for real elevation data;
     // the 2010 map's heights are already authored at the scale it wants.
     showDataset(terrain) {
+        this.showWindowSizes(terrain);
+        document.getElementById('liveTiles-row').hidden = !terrain.procedural;
         document.getElementById('vertScale-row').hidden = !terrain.procedural;
         document.getElementById('detailDistance-row').hidden = !terrain.procedural;
         document.getElementById('debugGrid').parentElement.hidden = !terrain.procedural;
         document.getElementById('imagery').parentElement.hidden = !terrain.procedural;
+    }
+
+    // The extent an option buys depends on the zoom and the latitude, so
+    // the labels are rewritten against the window actually loaded rather
+    // than left as numbers that are only true over Caldera. The imagery
+    // note is not monotonic and has to be said out loud: the base mosaic
+    // gets a free zoom step while tiles*512 fits in 4096, so eight tiles
+    // gives a sharper picture than ten.
+    showWindowSizes(terrain) {
+        const mpp = terrain.procedural ? terrain.metresPerTexel : 0;
+        for (const opt of document.getElementById('liveTiles').options) {
+            const n = parseInt(opt.value, 10);
+            const km = n * 256 * mpp / 1000;
+            const base = n * 512 <= 4096 ? '' : ', coarser base';
+            opt.textContent = mpp
+                ? `${n}\u00d7${n} \u2014 ${km.toFixed(0)} km${base}`
+                : `${n}\u00d7${n} tiles`;
+        }
+        const note = document.getElementById('liveTiles-note');
+        note.textContent = mpp && terrain.meta
+            ? `${terrain.meta.tiles}\u00d7${terrain.meta.tiles}`
+            : '';
     }
 
     // Attribution is a legal requirement for both data sources, so it is
@@ -115,9 +185,11 @@ export class UI {
             document.getElementById(key).value = this.settings[key];
             this.show(key);
         }
-        for (const key of ['retro', 'terrainFollow', 'imagery', 'debugGrid']) {
+        for (const key of ['retro', 'terrainFollow', 'imagery', 'debugGrid',
+                           'lockZoom']) {
             document.getElementById(key).checked = this.settings[key];
         }
+        document.getElementById('liveTiles').value = this.settings.liveTiles;
     }
 
     show(key) {
@@ -139,11 +211,22 @@ export class UI {
         // Real data: report in metres and degrees. The engine works in
         // texels, so altitude is divided back out of the exaggeration.
         const mpp = terrain.metresPerTexel;
-        const alt = camera.z / this.settings.vertScale * mpp;
+        const vs = this.settings.vertScale * (terrain.reliefScale || 1);
+        const alt = camera.z / vs * mpp;
         const ground = camera.groundAt(camera.x, camera.y)
-                     / this.settings.vertScale * mpp;
+                     / vs * mpp;
         const { lat, lon } = terrain.latLon(camera.x, camera.y);
         const km = this.settings.drawDistance * mpp / 1000;
+        // Speed and the window it implies. Both move now -- the window's
+        // zoom is chosen so it always takes about a minute to cross --
+        // so seeing them together is how the streaming makes sense.
+        const v = camera.speed * mpp;
+        const speedTxt = v >= 1000
+            ? `<b>${(v / 1000).toFixed(1)} km/s</b> · mach ${(v / 343).toFixed(0)}`
+            : `<b>${v.toFixed(0)} m/s</b>`;
+        const win = terrain.meta
+            ? ` · window <b>z${terrain.meta.zoom}</b> ${(terrain.size * mpp / 1000).toFixed(0)} km`
+            : '';
         // Enough numbers to reason about the level of detail: how far
         // away the ground being looked at is, what a screen pixel covers
         // there, and what the layer actually delivers.
@@ -157,11 +240,19 @@ export class UI {
         // what the screen alone would have asked for, so the two can be
         // compared while flying. "capped" means the request was larger
         // than the detail rectangle can actually cover.
-        const switchLine = lod
-            ? `<br>switch @ <b>${(lod.threshold / 1000).toFixed(2)} km</b>` +
-              (lod.limited ? ' (rect-limited)' : '') +
-              ` · auto ${(lod.auto / 1000).toFixed(2)} km`
-            : '';
+        // Locked, the switch distance decides nothing, so saying what it
+        // would have asked for is noise. Report the lock and the reach
+        // instead -- reach is the thing a locked ladder gives up, and it
+        // is the number that explains why the far half of the frame is
+        // base mosaic.
+        const switchLine = !lod ? ''
+            : this.settings.lockZoom
+                ? `<br>zoom <b>locked</b> · reach ` +
+                  `${(lod.reach / 1000).toFixed(2)} km` +
+                  (lod.dist > lod.reach ? ' — <b>looking past it</b>' : '')
+                : `<br>switch @ <b>${(lod.threshold / 1000).toFixed(2)} km</b>` +
+                  (lod.limited ? ' (rect-limited)' : '') +
+                  ` · auto ${(lod.auto / 1000).toFixed(2)} km`;
         // One line per clipmap ring. Tile progress matters now that a ring
         // is published before its tiles arrive, so "which level" and "how
         // much of it has landed" are two different questions.
@@ -182,7 +273,8 @@ export class UI {
             `alt <b>${alt.toFixed(0)} m</b> ` +
             `(ground ${ground.toFixed(0)} m)<br>` +
             `<b>${lat.toFixed(4)}°, ${lon.toFixed(4)}°</b><br>` +
-            `view <b>${km.toFixed(1)} km</b> · ${mpp.toFixed(1)} m/texel` +
+            `view <b>${km.toFixed(1)} km</b> · ${mpp.toFixed(1)} m/texel<br>` +
+            speedTxt + win +
             lookLine + switchLine + detailLine;
     }
 }
