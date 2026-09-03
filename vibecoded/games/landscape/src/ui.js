@@ -98,6 +98,22 @@ export class UI {
             settings.terrain = sel.value;
             onChange('terrain');
         });
+
+        // The groups are where the panel's height goes, so which ones are
+        // open is worth keeping. Storage can be unavailable -- a private
+        // window, or a browser set to refuse it -- and a panel that
+        // forgets is a smaller problem than one that will not open.
+        for (const group of document.querySelectorAll('#panel .group')) {
+            const key = `landscape.${group.id}`;
+            try {
+                const saved = localStorage.getItem(key);
+                if (saved !== null) group.open = saved === '1';
+            } catch { /* not stored, not fatal */ }
+            group.addEventListener('toggle', () => {
+                try { localStorage.setItem(key, group.open ? '1' : '0'); }
+                catch { /* as above */ }
+            });
+        }
     }
 
     // The window's own draw distance. Draw distance is measured in

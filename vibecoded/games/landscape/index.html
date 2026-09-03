@@ -17,7 +17,14 @@
           touch-action: none; }
 
   #panel {
-    position: fixed; top: 12px; left: 12px; width: 250px;
+    position: fixed; top: 12px; left: 12px;
+    width: min(420px, calc(100vw - 24px));
+    /* Two columns bring the stack to roughly 690px, which fits a laptop
+       and does not fit a phone above the stick. The cap is what keeps
+       the promise either way: the panel scrolls inside its own box
+       rather than running off the screen, where the lower half used to
+       be simply unreachable. */
+    max-height: calc(100vh - 24px); overflow-y: auto;
     padding: 12px 14px 14px;
     background: var(--panel-bg); color: var(--panel-fg);
     border: 1px solid rgba(255,255,255,0.09); border-radius: 8px;
@@ -26,13 +33,57 @@
     user-select: none;
   }
   #panel[hidden] { display: none; }
+  /* The display rules below are more specific than the browser's own
+     [hidden] rule, and were quietly beating it: the four rows ui.js
+     hides for non-procedural terrain stayed on screen. */
+  #panel [hidden] { display: none !important; }
+
+  #panel .head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
+  }
+  /* Two columns where there is room for them, one where there is not,
+     so the same panel serves a desktop and a narrow phone. */
+  #panel .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    column-gap: 14px; align-items: start;
+    margin-top: 2px;
+  }
+  #panel .grid > .span { grid-column: 1 / -1; }
+
+  /* Collapsing is what makes the panel fit a phone: width folds to one
+     column on its own, but height only comes down if the controls can
+     be put away. <details> gives that for free, keyboard included. */
+  #panel .group { border-top: 1px solid rgba(255,255,255,0.07); }
+  #panel .group > summary {
+    display: flex; align-items: center; gap: 7px;
+    list-style: none; cursor: pointer; padding: 7px 0 5px;
+    color: var(--panel-dim); font-size: 11px;
+    letter-spacing: .06em; text-transform: uppercase;
+  }
+  #panel .group > summary::-webkit-details-marker { display: none; }
+  #panel .group > summary::before { content: '▸'; font-size: 9px; color: var(--accent); }
+  #panel .group[open] > summary::before { content: '▾'; }
+  #panel .group > summary:hover { color: var(--panel-fg); }
+  #panel .group > .grid { padding-bottom: 7px; margin-top: 0; }
+
+  /* Dark UI swallows the browser's default focus ring, and every one of
+     these is reachable by keyboard. */
+  #panel summary:focus-visible, #panel button:focus-visible,
+  #panel input:focus-visible, #panel select:focus-visible,
+  #docs button:focus-visible, #docs a:focus-visible,
+  #docs-body:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
   #panel h1 {
     margin: 0 0 2px; font-size: 12px; letter-spacing: .08em;
     text-transform: uppercase; color: var(--accent);
   }
-  #panel .note { margin: 0 0 10px; color: var(--panel-dim); font-size: 11px; }
+  #panel .note { margin: 0 0 6px; color: var(--panel-dim); font-size: 11px; }
   #panel label { display: block; margin-top: 9px; }
-  #panel .row { display: flex; justify-content: space-between; gap: 8px; }
+  #panel .row { display: flex; justify-content: space-between; gap: 8px;
+                flex-wrap: wrap; }
   #panel .row span:last-child { color: var(--panel-dim); }
   #panel input[type=range] { width: 100%; margin: 2px 0 0; accent-color: var(--accent); }
   #panel input[type=checkbox] { accent-color: var(--accent); margin: 0 6px 0 0; }
@@ -111,15 +162,173 @@
   #touch button.on { background: rgba(127,196,255,0.45); border-color: var(--accent); }
   #touch button:disabled { opacity: .35; }
 
-  /* On a phone the panel would otherwise cover most of the view. */
-  @media (max-width: 560px) {
-    #panel { width: calc(100vw - 24px); max-height: 56vh; overflow-y: auto; }
+  /* With the sticks on screen the panel no longer has the corner to
+     itself. Reserve what they occupy: the move stick and its label take
+     the bottom 176px (26 + 132 + 18), and the button column takes a
+     76px strip down the right (12 + 52 + 12). */
+  body.touch #panel {
+    width: min(420px, calc(100vw - 88px));
+    max-height: calc(100vh - 200px);
   }
   /* Landscape phones are short; shrink the sticks so they still fit. */
   @media (max-height: 480px) {
     .stick { width: 108px; height: 108px; bottom: 18px; }
     .stick-thumb { width: 48px; height: 48px; }
     #touch-lift { bottom: 22px; }
+    /* The shorter stick gives 32px of it back. */
+    body.touch #panel { max-height: calc(100vh - 168px); }
+  }
+
+  /* --- documentation overlay ------------------------------------ */
+  #docs-open {
+    flex: none; padding: 2px 10px;
+    background: rgba(127,196,255,0.12); color: var(--panel-fg);
+    border: 1px solid rgba(127,196,255,0.35); border-radius: 4px;
+    font: inherit; cursor: pointer;
+  }
+  #docs-open:hover { background: rgba(127,196,255,0.22); }
+
+  #docs {
+    position: fixed; inset: 0; z-index: 20;
+    display: grid; grid-template-columns: 240px minmax(0, 1fr);
+    background: rgba(11, 13, 16, 0.97);
+    backdrop-filter: blur(10px);
+    color: var(--panel-fg);
+  }
+  #docs[hidden] { display: none; }
+
+  #docs-nav {
+    border-right: 1px solid rgba(255,255,255,0.09);
+    overflow-y: auto; padding-bottom: 40px;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  #docs-head {
+    position: sticky; top: 0; z-index: 1;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 10px 11px 14px;
+    background: rgba(11, 13, 16, 0.97);
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  #docs-head h2 {
+    margin: 0; font-size: 12px; font-weight: 500;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  #docs-close {
+    background: none; border: 0; color: var(--panel-dim);
+    font: inherit; font-size: 14px; line-height: 1; cursor: pointer;
+    padding: 3px 6px; border-radius: 4px;
+  }
+  #docs-close:hover { color: var(--panel-fg); background: rgba(255,255,255,0.07); }
+
+  #docs-list, .docs-toc { list-style: none; margin: 0; padding: 0; }
+  #docs-list > li { margin-top: 2px; }
+  .docs-title {
+    display: block; width: 100%; text-align: left;
+    padding: 5px 14px; border: 0; background: none;
+    color: var(--panel-dim); font: inherit; cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .docs-title:hover { color: var(--panel-fg); }
+  #docs-list > li.active > .docs-title {
+    color: var(--panel-fg); border-left-color: var(--accent);
+  }
+  /* Contents belong to the document you are in; showing all four at
+     once would be 100 lines of headings for three books you are not
+     reading. */
+  .docs-toc { display: none; margin: 2px 0 8px; }
+  #docs-list > li.active .docs-toc { display: block; }
+  .docs-toc a {
+    display: block; padding: 3px 14px 3px 22px;
+    color: #9aa5b1; text-decoration: none;
+    border-left: 2px solid transparent;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .docs-toc a.sub { padding-left: 34px; font-size: 11px; }
+  .docs-toc a:hover { color: var(--panel-fg); }
+  .docs-toc a.here { color: var(--accent); border-left-color: rgba(127,196,255,0.5); }
+
+  #docs-body { overflow-y: auto; padding: 44px 40px 40vh; }
+  /* Monospace is right for the instrument panel and wrong for 2000
+     lines of prose; the code inside it goes back to mono below. */
+  #docs-article {
+    max-width: 74ch; margin: 0 auto;
+    font: 15px/1.66 ui-sans-serif, system-ui, -apple-system, Segoe UI,
+          Roboto, Helvetica, Arial, sans-serif;
+    color: #c9d1da;
+  }
+  #docs-article h1, #docs-article h2, #docs-article h3,
+  #docs-article h4, #docs-article h5, #docs-article h6 {
+    color: #eef2f6; line-height: 1.3; margin: 1.9em 0 .6em;
+    scroll-margin-top: 24px;
+  }
+  #docs-article h1 { font-size: 26px; margin-top: 0; letter-spacing: -.01em; }
+  #docs-article h2 {
+    font-size: 19px; margin-top: 2.2em;
+    padding-bottom: .3em; border-bottom: 1px solid rgba(255,255,255,0.09);
+  }
+  #docs-article h3 { font-size: 15.5px; color: var(--accent); }
+  #docs-article h4, #docs-article h5, #docs-article h6 { font-size: 14px; }
+  #docs-article p { margin: 0 0 1.05em; }
+  #docs-article ul, #docs-article ol { margin: 0 0 1.05em; padding-left: 1.5em; }
+  #docs-article li { margin: .3em 0; }
+  #docs-article a { color: var(--accent); text-decoration: none;
+                    border-bottom: 1px solid rgba(127,196,255,0.3); }
+  #docs-article a:hover { border-bottom-color: var(--accent); }
+  #docs-article strong { color: #eef2f6; font-weight: 600; }
+  #docs-article hr {
+    border: 0; border-top: 1px solid rgba(255,255,255,0.09); margin: 2.4em 0;
+  }
+  #docs-article blockquote {
+    margin: 0 0 1.05em; padding: 2px 0 2px 14px;
+    border-left: 2px solid rgba(127,196,255,0.4); color: var(--panel-dim);
+  }
+  #docs-article code {
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px;
+    color: #dfe6ee;
+  }
+  #docs-article pre {
+    margin: 0 0 1.3em; padding: 13px 15px; overflow-x: auto;
+    background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 6px;
+  }
+  #docs-article pre code {
+    background: none; padding: 0; font-size: 12.5px; line-height: 1.55;
+    white-space: pre;
+  }
+  /* Wide tables scroll in their own box; the page itself never does. */
+  .docs-scroll { overflow-x: auto; margin: 0 0 1.3em; }
+  #docs-article table {
+    border-collapse: collapse; width: 100%;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  #docs-article th, #docs-article td {
+    text-align: left; vertical-align: top; padding: 6px 12px 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
+  #docs-article th {
+    color: var(--accent); font-weight: 500; white-space: nowrap;
+    border-bottom-color: rgba(255,255,255,0.16);
+  }
+  #docs-article td code { white-space: nowrap; }
+  .docs-loading, .docs-error { color: var(--panel-dim); }
+  .docs-error { color: #ff8b6b; }
+
+  /* Narrow screens get the document; the contents rail would leave it
+     no room. */
+  @media (max-width: 720px) {
+    #docs { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    #docs-nav { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.09);
+                padding-bottom: 6px; }
+    #docs-list { display: flex; flex-wrap: wrap; padding: 0 8px 4px; }
+    .docs-title { width: auto; padding: 4px 8px; border-left: 0;
+                  border-bottom: 2px solid transparent; }
+    #docs-list > li.active > .docs-title {
+      border-left: 0; border-bottom-color: var(--accent);
+    }
+    .docs-toc { display: none !important; }
+    #docs-body { padding: 22px 18px 40vh; }
   }
 
   #error {
@@ -140,97 +349,140 @@
 <canvas id="view"></canvas>
 
 <div id="panel">
-  <h1>Landscape</h1>
-  <p class="note">Click to look · WASD · Shift · H hides</p>
+  <div class="head">
+    <h1>Landscape</h1>
+    <button id="docs-open">Docs</button>
+  </div>
+  <p class="note">Click to look · WASD · Shift · H hides · ? docs</p>
 
-  <label class="sel">
-    <span class="row"><span>Terrain</span></span>
-    <select id="terrain">
-      <option value="original">Original 2010 map</option>
-    </select>
-  </label>
+  <!-- Where you are, always in reach; everything else lives in a group
+       that can be shut. Two controls per row where the panel is wide
+       enough, one where it is not. -->
+  <div class="grid">
+    <label class="sel span">
+      <span class="row"><span>Terrain</span></span>
+      <select id="terrain">
+        <option value="original">Original 2010 map</option>
+      </select>
+    </label>
 
-  <div class="check">
-    <input type="checkbox" id="retro"><label for="retro">Retro (2010 look)</label>
-  </div>
-  <div class="check">
-    <input type="checkbox" id="imagery" checked>
-    <label for="imagery">Satellite imagery</label>
-  </div>
-  <div class="check">
-    <input type="checkbox" id="terrainFollow" checked>
-    <label for="terrainFollow">Terrain follow</label>
-  </div>
-  <label id="place-row">
-    <span class="row"><span>Fly to (lat, lon)</span><span id="place-note"></span></span>
-    <span style="display:flex; gap:4px; margin-top:2px">
-      <input type="text" id="place" placeholder="-27.07, -70.82" autocomplete="off"
-             style="flex:1; min-width:0; background:#0006; color:inherit;
-                    border:1px solid #fff3; border-radius:3px; padding:2px 4px;
-                    font:inherit">
-      <button id="place-go" style="background:#fff2; color:inherit;
-              border:1px solid #fff3; border-radius:3px; padding:2px 8px;
-              font:inherit; cursor:pointer">Go</button>
-    </span>
-  </label>
-
-  <div class="check">
-    <input type="checkbox" id="roam" checked>
-    <label for="roam">Roam (stream terrain)</label>
-  </div>
-  <div class="check">
-    <input type="checkbox" id="lockZoom" checked>
-    <label for="lockZoom">Lock zoom (terrain + z17 imagery)</label>
-  </div>
-  <div class="check">
-    <input type="checkbox" id="debugGrid">
-    <label for="debugGrid">Tile grid + 1 km rings</label>
+    <label id="place-row" class="span">
+      <span class="row"><span>Fly to (lat, lon)</span><span id="place-note"></span></span>
+      <span style="display:flex; gap:4px; margin-top:2px">
+        <input type="text" id="place" placeholder="-27.07, -70.82" autocomplete="off"
+               style="flex:1; min-width:0; background:#0006; color:inherit;
+                      border:1px solid #fff3; border-radius:3px; padding:2px 4px;
+                      font:inherit">
+        <button id="place-go" style="background:#fff2; color:inherit;
+                border:1px solid #fff3; border-radius:3px; padding:2px 8px;
+                font:inherit; cursor:pointer">Go</button>
+      </span>
+    </label>
   </div>
 
-  <label>
-    <span class="row"><span>Render scale</span><span id="renderScale-v"></span></span>
-    <input type="range" id="renderScale" min="0.25" max="1" step="0.05">
-  </label>
-  <label id="vertScale-row">
-    <span class="row"><span>Vertical scale</span><span id="vertScale-v"></span></span>
-    <input type="range" id="vertScale" min="1" max="8" step="0.1">
-  </label>
-  <label>
-    <span class="row"><span>Draw distance</span><span id="drawDistance-v"></span></span>
-    <input type="range" id="drawDistance" min="200" max="3000" step="50">
-  </label>
-  <label id="detailDistance-row">
-    <span class="row"><span>Detail switch</span><span id="detailDistance-v"></span></span>
-    <input type="range" id="detailDistance" min="0.4" max="8" step="0.1">
-  </label>
-  <label>
-    <span class="row"><span>Fog density</span><span id="fogDensity-v"></span></span>
-    <input type="range" id="fogDensity" min="0" max="0.005" step="0.0001">
-  </label>
-  <label>
-    <span class="row"><span>Sun bearing</span><span id="sunAzimuth-v"></span></span>
-    <input type="range" id="sunAzimuth" min="0" max="360" step="1">
-  </label>
-  <label>
-    <span class="row"><span>Sun elevation</span><span id="sunElevation-v"></span></span>
-    <input type="range" id="sunElevation" min="2" max="88" step="1">
-  </label>
-  <label>
-    <span class="row"><span>Field of view</span><span id="fov-v"></span></span>
-    <input type="range" id="fov" min="30" max="120" step="1">
-  </label>
-  <label>
-    <span class="row"><span>Wind</span><span id="wind-v"></span></span>
-    <input type="range" id="wind" min="0" max="1" step="0.01">
-  </label>
-  <label>
-    <span class="row"><span>Speed</span><span id="speedLog-v"></span></span>
-    <input type="range" id="speedLog" min="0.7" max="3.5" step="0.02">
-  </label>
+  <details class="group" id="g-view" open>
+    <summary>View</summary>
+    <div class="grid">
+      <div class="check">
+        <input type="checkbox" id="retro"><label for="retro">Retro (2010)</label>
+      </div>
+      <label>
+        <span class="row"><span>Render scale</span><span id="renderScale-v"></span></span>
+        <input type="range" id="renderScale" min="0.25" max="1" step="0.05">
+      </label>
+      <label>
+        <span class="row"><span>Field of view</span><span id="fov-v"></span></span>
+        <input type="range" id="fov" min="30" max="120" step="1">
+      </label>
+      <label>
+        <span class="row"><span>Fog density</span><span id="fogDensity-v"></span></span>
+        <input type="range" id="fogDensity" min="0" max="0.005" step="0.0001">
+      </label>
+    </div>
+  </details>
+
+  <details class="group" id="g-terrain">
+    <summary>Terrain</summary>
+    <div class="grid">
+      <div class="check">
+        <input type="checkbox" id="imagery" checked>
+        <label for="imagery">Satellite imagery</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="terrainFollow" checked>
+        <label for="terrainFollow">Terrain follow</label>
+      </div>
+      <label id="vertScale-row">
+        <span class="row"><span>Vertical scale</span><span id="vertScale-v"></span></span>
+        <input type="range" id="vertScale" min="1" max="8" step="0.1">
+      </label>
+      <label>
+        <span class="row"><span>Draw distance</span><span id="drawDistance-v"></span></span>
+        <input type="range" id="drawDistance" min="200" max="3000" step="50">
+      </label>
+      <label id="detailDistance-row">
+        <span class="row"><span>Detail switch</span><span id="detailDistance-v"></span></span>
+        <input type="range" id="detailDistance" min="0.4" max="8" step="0.1">
+      </label>
+    </div>
+  </details>
+
+  <details class="group" id="g-stream">
+    <summary>Streaming</summary>
+    <div class="grid">
+      <div class="check">
+        <input type="checkbox" id="roam" checked>
+        <label for="roam">Roam (stream)</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="lockZoom" checked>
+        <label for="lockZoom">Lock zoom</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="debugGrid">
+        <label for="debugGrid">Tile grid + rings</label>
+      </div>
+    </div>
+  </details>
+
+  <details class="group" id="g-motion">
+    <summary>Sun &amp; motion</summary>
+    <div class="grid">
+      <label>
+        <span class="row"><span>Sun bearing</span><span id="sunAzimuth-v"></span></span>
+        <input type="range" id="sunAzimuth" min="0" max="360" step="1">
+      </label>
+      <label>
+        <span class="row"><span>Sun elevation</span><span id="sunElevation-v"></span></span>
+        <input type="range" id="sunElevation" min="2" max="88" step="1">
+      </label>
+      <label>
+        <span class="row"><span>Wind</span><span id="wind-v"></span></span>
+        <input type="range" id="wind" min="0" max="1" step="0.01">
+      </label>
+      <label>
+        <span class="row"><span>Speed</span><span id="speedLog-v"></span></span>
+        <input type="range" id="speedLog" min="0.7" max="3.5" step="0.02">
+      </label>
+    </div>
+  </details>
 
   <hr>
   <div id="stats"></div>
   <div id="attrib"></div>
+</div>
+
+<div id="docs" hidden role="dialog" aria-modal="true" aria-labelledby="docs-heading">
+  <nav id="docs-nav" aria-label="Documents and contents">
+    <div id="docs-head">
+      <h2 id="docs-heading">Docs</h2>
+      <button id="docs-close" title="Close (Esc)" aria-label="Close documentation">✕</button>
+    </div>
+    <ul id="docs-list"></ul>
+  </nav>
+  <!-- Focus lands here when the overlay opens, so Page Down scrolls the
+       prose straight away instead of the page behind it. -->
+  <div id="docs-body" tabindex="-1" aria-label="Document"><article id="docs-article"></article></div>
 </div>
 
 <div id="hint" hidden></div>

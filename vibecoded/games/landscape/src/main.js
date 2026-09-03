@@ -9,6 +9,7 @@ import { loadImage, decodeHeights, createHeightTexture } from './gl.js';
 import { windOffsets } from './wind.js';
 import { fetchTerrain, tileXY } from './terrain-tiles.js';
 import { PLACES } from './places.js';
+import { Docs } from './docs.js';
 import { windowZoom, rebase, scaleBetween, nextCentre, needsMove, safeMargin,
          edgeGap }
     from './terrain-window.js';
@@ -236,6 +237,9 @@ async function main() {
         ? query.get('touch') !== '0'
         : isTouchDevice();
     if (touchMode) settings.renderScale = 0.6;
+    // The stylesheet reserves the corners the sticks occupy, so the
+    // panel has to know they are there.
+    document.body.classList.toggle('touch', touchMode);
     const pinned = applyQuerySettings(settings);
 
     let sources, images;
@@ -825,18 +829,33 @@ async function main() {
     const noHud = query.get('hud') === '0';
     if (noHud) document.getElementById('panel').hidden = true;
 
+    // Declared before `input` so the two can refer to each other; the
+    // callbacks either way round only run once both exist.
+    const docs = new Docs({
+        onOpen: () => input.suspend(),
+        onClose: () => input.resume(),
+    });
+
     const input = new Input(canvas, {
         onToggleUI: () => ui.toggle(),
+        onDocs: () => docs.toggle(),
+        onEscape: () => docs.close(),
         onFov: (d) => {
             settings.fov = Math.min(120, Math.max(30, settings.fov + d));
             ui.sync();
         },
     });
 
+    // #docs/redesign opens straight to a document, and survives reload.
+    docs.fromHash();
+
     let touch = null;
     let tilt = null;
     if (touchMode) {
-        touch = new TouchControls(canvas, { onToggleUI: () => ui.toggle() });
+        touch = new TouchControls(canvas, {
+            onToggleUI: () => ui.toggle(),
+            onDocs: () => docs.toggle(),
+        });
         tilt = new Tilt({
             onStateChange: (t) => {
                 const btn = document.getElementById('btn-tilt');

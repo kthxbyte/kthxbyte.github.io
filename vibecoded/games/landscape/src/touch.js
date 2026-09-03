@@ -109,7 +109,7 @@ class Stick {
 }
 
 export class TouchControls {
-    constructor(canvas, { onToggleUI }) {
+    constructor(canvas, { onToggleUI, onDocs }) {
         const root = document.createElement('div');
         root.id = 'touch';
         root.innerHTML = `
@@ -117,6 +117,7 @@ export class TouchControls {
             <button id="btn-tilt" aria-label="Toggle tilt look">◎</button>
             <button id="btn-center" aria-label="Re-centre view">⌖</button>
             <button id="btn-panel" aria-label="Toggle settings">⚙</button>
+            <button id="btn-docs" aria-label="Open documentation">?</button>
           </div>
           <div id="touch-lift">
             <button id="btn-up" aria-label="Ascend">▲</button>
@@ -145,6 +146,9 @@ export class TouchControls {
         hold('#btn-up', (v) => { this.up = v; });
         hold('#btn-down', (v) => { this.up = -v; });
         root.querySelector('#btn-panel').addEventListener('click', onToggleUI);
+        // On touch the panel starts hidden, so without this the docs
+        // button inside it cannot be reached at all.
+        root.querySelector('#btn-docs').addEventListener('click', onDocs);
 
         // A finger leaving the page mid-drag would otherwise stick.
         addEventListener('blur', () => {

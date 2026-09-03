@@ -23,6 +23,29 @@ then open <http://localhost:8000/>.
 | `Space` / `Ctrl` | ascend / descend |
 | `Shift` | boost |
 | wheel | field of view |
+| `H` | hide the settings panel |
+| `?` | these documents, in the demo (`Esc` closes) |
+
+**Docs** opens this file and the three beside it over the view, with a
+contents rail down the left and the flight controls parked until you
+close it. It is a modal dialogue: focus moves into the reading pane so
+`Page Down` works at once, `Tab` stays inside, `Esc` closes, and focus
+returns to whatever opened it. On a touch device the panel starts
+hidden, so the `?` button sits with the other touch controls at the top
+right. `#docs/redesign` in the URL opens straight to a document, so a
+section can be linked. The markdown is rendered by `src/markdown.js`,
+which covers what these four files use and nothing more;
+`tools/test-markdown.mjs` renders all four and checks the structure
+survives, so a construct it cannot handle shows up as a failing test
+rather than as a hole in the page.
+
+The panel's controls are grouped under **View**, **Terrain**,
+**Streaming** and **Sun & motion**, which open and close and are
+remembered between visits. What you need most -- the terrain selector,
+"Fly to", and the readout -- sits outside the groups and is always
+visible. Collapsing is what makes the panel fit a phone: it lays out two
+controls per row where there is width for them and one where there is
+not, but only closing a group brings the height down.
 
 The panel's readout gives the live numbers behind the level of detail:
 altitude, viewing distance, the ground a screen pixel covers there, the
@@ -75,7 +98,6 @@ since its metres are arbitrary and it has no Mach to speak of.
 
 The sun is set by compass bearing (0 = north, 90 = east). The default
 view sits at latitude -33, so its light comes from the north.
-| `H` | hide the settings panel |
 
 On a touch device the page switches to a movement joystick plus
 drag-anywhere to look, with buttons for altitude, the settings panel,
